@@ -67,6 +67,23 @@
 
 struct MemoryEditor
 {
+    // A primary data type
+    enum DataType_
+    {
+        DataType_S8,       // signed char / char (with sensible compilers)
+        DataType_U8,       // unsigned char
+        DataType_S16,      // short
+        DataType_U16,      // unsigned short
+        DataType_S32,      // int
+        DataType_U32,      // unsigned int
+        DataType_S64,      // long long / __int64
+        DataType_U64,      // unsigned long long / unsigned __int64
+        DataType_HalfFloat,// _Float16
+        DataType_Float,    // float
+        DataType_Double,   // double
+        DataType_COUNT
+    };
+
     enum DataFormat
     {
         DataFormat_Bin = 0,
@@ -75,10 +92,20 @@ struct MemoryEditor
         DataFormat_COUNT
     };
 
+    union Color {
+        ImU32 id;
+        struct {
+            ImU8 r;
+            ImU8 g;
+            ImU8 b;
+            ImU8 a;
+        };
+    };
+
     struct HighlightRange {
-        ImU32 RangeColor;
-        ImU8 RangeStartAddress; // Inclusive
-        ImU8 RangeEndAddress; // Inclusive
+        Color RangeColor;
+        size_t RangeStartAddress; // Inclusive
+        size_t RangeEndAddress; // Exclusive
     };
 
     // Settings
@@ -95,7 +122,7 @@ struct MemoryEditor
     int             OptAddrDigitsCount;                         // = 0      // number of addr digits to display (default calculated based on maximum displayed addr).
     float           OptFooterExtraHeight;                       // = 0      // space to reserve at the bottom of the widget to add custom widgets
     ImU32           HighlightColor;                             //          // background color of highlighted bytes.
-    ImU8            (*ReadFn)(const ImU8* data, size_t off);    // = 0      // optional handler to read bytes.
+    ImU8            (*ReadFn)(const ImU8 *data, size_t off);    // = 0      // optional handler to read bytes.
     void            (*WriteFn)(ImU8* data, size_t off, ImU8 d); // = 0      // optional handler to write bytes.
     bool            (*HighlightFn)(const ImU8* data, size_t off);//= 0      // optional handler to return Highlight property (to support non-contiguous highlighting).
 
@@ -120,7 +147,7 @@ struct MemoryEditor
         // Settings
         Open = true;
         ReadOnly = false;
-        Cols = 16;
+        Cols = 14;
         OptShowOptions = true;
         OptShowDataPreview = true;
         OptShowHexII = false;
@@ -130,10 +157,10 @@ struct MemoryEditor
         OptMidColsCount = 8;
         OptAddrDigitsCount = 0;
         OptFooterExtraHeight = 0.0f;
-        HighlightColor = IM_COL32(255, 255, 255, 50);
         ReadFn = NULL;
         WriteFn = NULL;
         HighlightFn = NULL;
+        HighlightColor = IM_COL32(255, 127, 255, 150);
 
         // State/Internals
         ContentsWidthChanged = false;
@@ -169,9 +196,11 @@ struct MemoryEditor
         Sizes() { memset(this, 0, sizeof(*this)); }
     };
 
-    bool IsInRange(size_t const addr, ImU32& color) {
-        for (auto const& highlight_range : Ranges) {
-            if (highlight_range.RangeStartAddress <= addr && addr >= highlight_range.RangeEndAddress) {
+    bool IsInRange(size_t const addr, Color& color) {
+        for (size_t idx = Ranges.size() - 1; idx != size_t(-1); idx -= 1)
+        {
+            auto const& highlight_range = Ranges.at(idx);
+            if (highlight_range.RangeStartAddress <= addr && addr < highlight_range.RangeEndAddress) {
                 color = highlight_range.RangeColor;
                 return true;
             }
@@ -275,7 +304,6 @@ struct MemoryEditor
         const ImU32 color_disabled = OptGreyOutZeroes ? ImGui::GetColorU32(ImGuiCol_TextDisabled) : color_text;
 
         const char* format_address = OptUpperCaseHex ? "%0*" _PRISizeT "X: " : "%0*" _PRISizeT "x: ";
-        const char* format_data = OptUpperCaseHex ? "%0*" _PRISizeT "X" : "%0*" _PRISizeT "x";
         const char* format_byte_space = OptUpperCaseHex ? "%02X " : "%02x ";
 
         while (clipper.Step())
@@ -292,24 +320,7 @@ struct MemoryEditor
                         byte_pos_x += (float)(n / OptMidColsCount) * s.SpacingBetweenMidCols;
                     ImGui::SameLine(byte_pos_x);
 
-
-                    if (DataEditingAddr == addr)
-                    {
-                        ImGui::PushID((void*)addr);
-                        if (DataEditingTakeFocus)
-                        {
-                            ImGui::SetKeyboardFocusHere(0);
-                            sprintf(AddrInputBuf, format_data, s.AddrDigitsCount, base_display_addr + addr);
-                        }
-                        else if (!DataEditingTakeFocus && !ImGui::IsItemActive())
-                            DataEditingAddr = data_editing_addr_next = (size_t)-1;
-                        DataEditingTakeFocus = false;
-                        if (data_editing_addr_next != (size_t)-1)
-                            data_next = false;
-                        ImGui::PopID();
-                    }
-
-                    ImU32 highlight_range_color;
+                    Color highlight_range_color;
                     ImU8 b = mem_data[addr];
 
                     // Draw highlight
@@ -328,17 +339,15 @@ struct MemoryEditor
                                 highlight_width += s.SpacingBetweenMidCols;
                         }
 
-                        ImU32 highlight_color = IM_COL32(255, 127, 127, 255);
+                        Color highlight_color;
+                        highlight_color.id = HighlightColor;
                         if (IsInRange(addr, highlight_range_color))
                         {
-                            highlight_color = (highlight_color * 0.75f + highlight_range_color * 0.25f);
-                            highlight_color = (highlight_color ^ IM_COL32_A_MASK);
-                            highlight_color = highlight_color | (50 << IM_COL32_A_SHIFT);
-                        } else {
-                            highlight_color = (highlight_color ^ IM_COL32_A_MASK);
-                            highlight_color = highlight_color | (50 << IM_COL32_A_SHIFT);
+                            highlight_color.r = ((uint)highlight_color.r + (uint)highlight_range_color.r) / 2;
+                            highlight_color.g = ((uint)highlight_color.g + (uint)highlight_range_color.g) / 2;
+                            highlight_color.b = ((uint)highlight_color.b + (uint)highlight_range_color.b) / 2;
                         }
-                        draw_list->AddRectFilled(pos, ImVec2(pos.x + highlight_width, pos.y + s.LineHeight), highlight_color);
+                        draw_list->AddRectFilled(pos, ImVec2(pos.x + highlight_width, pos.y + s.LineHeight), highlight_color.id);
                     } else if (IsInRange(addr, highlight_range_color)) {
                         ImVec2 pos = ImGui::GetCursorScreenPos();
                         float highlight_width = s.GlyphWidth * 2;
@@ -349,7 +358,7 @@ struct MemoryEditor
                             if (OptMidColsCount > 0 && n > 0 && (n + 1) < Cols && ((n + 1) % OptMidColsCount) == 0)
                                 highlight_width += s.SpacingBetweenMidCols;
                         }
-                        draw_list->AddRectFilled(pos, ImVec2(pos.x + highlight_width, pos.y + s.LineHeight), highlight_range_color);
+                        draw_list->AddRectFilled(pos, ImVec2(pos.x + highlight_width, pos.y + s.LineHeight), highlight_range_color.id);
                     }
 
 
@@ -386,11 +395,15 @@ struct MemoryEditor
                         DataEditingTakeFocus = true;
                     }
                     ImGui::PopID();
+                    
                     for (int n = 0; n < Cols && addr < mem_size; n++, addr++)
                     {
-                        if (addr == DataEditingAddr)
+                        bool is_highlight_from_user_range = (addr >= HighlightMin && addr < HighlightMax);
+                        bool is_highlight_from_user_func = (HighlightFn && HighlightFn(mem_data, addr));
+                        bool is_highlight_from_preview = (addr >= DataPreviewAddr && addr < DataPreviewAddr + preview_data_type_size);
+                        if (is_highlight_from_user_range || is_highlight_from_user_func || is_highlight_from_preview)
                         {
-                            draw_list->AddRectFilled(pos, ImVec2(pos.x + s.GlyphWidth, pos.y + s.LineHeight), IM_COL32(0, 127, 255, 255));
+                            draw_list->AddRectFilled(pos, ImVec2(pos.x + s.GlyphWidth, pos.y + s.LineHeight), HighlightColor);
                         }
                         unsigned char c = ReadFn ? ReadFn(mem_data, addr) : mem_data[addr];
                         char display_c = (c < 32 || c >= 128) ? '.' : c;
@@ -491,8 +504,8 @@ struct MemoryEditor
         ImGui::SetNextItemWidth((s.GlyphWidth * 10.0f) + style.FramePadding.x * 2.0f + style.ItemInnerSpacing.x);
         if (ImGui::BeginCombo("##combo_type", DataTypeGetDesc(PreviewDataType), ImGuiComboFlags_HeightLargest))
         {
-            for (int n = 0; n < ImGuiDataType_COUNT; n++)
-                if (ImGui::Selectable(DataTypeGetDesc((ImGuiDataType)n), PreviewDataType == n))
+            for (int n = 0; n < DataType_COUNT; n++)
+                if (ImGui::Selectable(DataTypeGetDesc(n), PreviewDataType == n))
                     PreviewDataType = (ImGuiDataType)n;
             ImGui::EndCombo();
         }
@@ -516,16 +529,16 @@ struct MemoryEditor
     }
 
     // Utilities for Data Preview
-    const char* DataTypeGetDesc(ImGuiDataType data_type) const
+    const char* DataTypeGetDesc(int data_type) const
     {
-        const char* descs[] = { "Int8", "Uint8", "Int16", "Uint16", "Int32", "Uint32", "Int64", "Uint64", "Float", "Double" };
-        IM_ASSERT(data_type >= 0 && data_type < ImGuiDataType_COUNT);
+        const char* descs[DataType_COUNT] = { "Int8", "Uint8", "Int16", "Uint16", "Int32", "Uint32", "Int64", "Uint64", "HalfFloat", "Float", "Double" };
+        IM_ASSERT(data_type >= 0 && data_type < DataType_COUNT);
         return descs[data_type];
     }
 
     size_t DataTypeGetSize(ImGuiDataType data_type) const
     {
-        const size_t sizes[] = { 1, 1, 2, 2, 4, 4, 8, 8, sizeof(float), sizeof(double) };
+        const size_t sizes[] = { 1, 1, 2, 2, 4, 4, 8, 8, sizeof(_Float16), sizeof(float), sizeof(double) };
         IM_ASSERT(data_type >= 0 && data_type < ImGuiDataType_COUNT);
         return sizes[data_type];
     }
@@ -625,7 +638,7 @@ struct MemoryEditor
         out_buf[0] = 0;
         switch (data_type)
         {
-        case ImGuiDataType_S8:
+        case DataType_S8:
         {
             int8_t int8 = 0;
             EndianessCopy(&int8, buf, size);
@@ -633,7 +646,7 @@ struct MemoryEditor
             if (data_format == DataFormat_Hex) { ImSnprintf(out_buf, out_buf_size, "0x%02x", int8 & 0xFF); return; }
             break;
         }
-        case ImGuiDataType_U8:
+        case DataType_U8:
         {
             uint8_t uint8 = 0;
             EndianessCopy(&uint8, buf, size);
@@ -641,7 +654,7 @@ struct MemoryEditor
             if (data_format == DataFormat_Hex) { ImSnprintf(out_buf, out_buf_size, "0x%02x", uint8 & 0XFF); return; }
             break;
         }
-        case ImGuiDataType_S16:
+        case DataType_S16:
         {
             int16_t int16 = 0;
             EndianessCopy(&int16, buf, size);
@@ -649,7 +662,7 @@ struct MemoryEditor
             if (data_format == DataFormat_Hex) { ImSnprintf(out_buf, out_buf_size, "0x%04x", int16 & 0xFFFF); return; }
             break;
         }
-        case ImGuiDataType_U16:
+        case DataType_U16:
         {
             uint16_t uint16 = 0;
             EndianessCopy(&uint16, buf, size);
@@ -657,7 +670,7 @@ struct MemoryEditor
             if (data_format == DataFormat_Hex) { ImSnprintf(out_buf, out_buf_size, "0x%04x", uint16 & 0xFFFF); return; }
             break;
         }
-        case ImGuiDataType_S32:
+        case DataType_S32:
         {
             int32_t int32 = 0;
             EndianessCopy(&int32, buf, size);
@@ -665,7 +678,7 @@ struct MemoryEditor
             if (data_format == DataFormat_Hex) { ImSnprintf(out_buf, out_buf_size, "0x%08x", int32); return; }
             break;
         }
-        case ImGuiDataType_U32:
+        case DataType_U32:
         {
             uint32_t uint32 = 0;
             EndianessCopy(&uint32, buf, size);
@@ -673,7 +686,7 @@ struct MemoryEditor
             if (data_format == DataFormat_Hex) { ImSnprintf(out_buf, out_buf_size, "0x%08x", uint32); return; }
             break;
         }
-        case ImGuiDataType_S64:
+        case DataType_S64:
         {
             int64_t int64 = 0;
             EndianessCopy(&int64, buf, size);
@@ -681,7 +694,7 @@ struct MemoryEditor
             if (data_format == DataFormat_Hex) { ImSnprintf(out_buf, out_buf_size, "0x%016llx", (long long)int64); return; }
             break;
         }
-        case ImGuiDataType_U64:
+        case DataType_U64:
         {
             uint64_t uint64 = 0;
             EndianessCopy(&uint64, buf, size);
@@ -689,7 +702,16 @@ struct MemoryEditor
             if (data_format == DataFormat_Hex) { ImSnprintf(out_buf, out_buf_size, "0x%016llx", (long long)uint64); return; }
             break;
         }
-        case ImGuiDataType_Float:
+        case DataType_HalfFloat:
+        {
+            _Float16 float16 = 0;
+            EndianessCopy(&float16, buf, size);
+            float float32 = float16;
+            if (data_format == DataFormat_Dec) { ImSnprintf(out_buf, out_buf_size, "%f", float32); return; }
+            if (data_format == DataFormat_Hex) { ImSnprintf(out_buf, out_buf_size, "%a", float32); return; }
+            break;
+        }
+        case DataType_Float:
         {
             float float32 = 0.0f;
             EndianessCopy(&float32, buf, size);
@@ -697,7 +719,7 @@ struct MemoryEditor
             if (data_format == DataFormat_Hex) { ImSnprintf(out_buf, out_buf_size, "%a", float32); return; }
             break;
         }
-        case ImGuiDataType_Double:
+        case DataType_Double:
         {
             double float64 = 0.0;
             EndianessCopy(&float64, buf, size);
@@ -705,7 +727,7 @@ struct MemoryEditor
             if (data_format == DataFormat_Hex) { ImSnprintf(out_buf, out_buf_size, "%a", float64); return; }
             break;
         }
-        case ImGuiDataType_COUNT:
+        case DataType_COUNT:
             break;
         } // Switch
         IM_ASSERT(0); // Shouldn't reach
