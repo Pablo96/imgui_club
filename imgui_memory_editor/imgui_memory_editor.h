@@ -50,6 +50,7 @@
 
 #include <stdio.h>      // sprintf, scanf
 #include <stdint.h>     // uint8_t, etc.
+#include <vector>      // std::vector
 
 #ifdef _MSC_VER
 #define _PRISizeT   "I"
@@ -74,8 +75,14 @@ struct MemoryEditor
         DataFormat_COUNT
     };
 
+    struct HighlightRange {
+        ImU32 RangeColor;
+        ImU8 RangeStartAddress; // Inclusive
+        ImU8 RangeEndAddress; // Inclusive
+    };
+
     // Settings
-    bool            Open;                                       // = true   // set to false when DrawWindow() was closed. ignore if not using DrawWindow().
+    bool Open;                                                  // = true   // set to false when DrawWindow() was closed. ignore if not using DrawWindow().
     bool            ReadOnly;                                   // = false  // disable any editing.
     int             Cols;                                       // = 16     // number of columns to display.
     bool            OptShowOptions;                             // = true   // display options button/context menu. when disabled, options will be locked unless you provide your own UI for them.
@@ -102,9 +109,14 @@ struct MemoryEditor
     size_t          HighlightMin, HighlightMax;
     int             PreviewEndianess;
     ImGuiDataType   PreviewDataType;
+    std::vector<HighlightRange> Ranges;
 
-    MemoryEditor()
+    MemoryEditor(HighlightRange* ranges, size_t const ranges_size)
     {
+        if (ranges != nullptr) {
+            Ranges = std::vector<HighlightRange>(ranges, ranges + ranges_size);
+        }
+
         // Settings
         Open = true;
         ReadOnly = false;
@@ -156,6 +168,16 @@ struct MemoryEditor
 
         Sizes() { memset(this, 0, sizeof(*this)); }
     };
+
+    bool IsInRange(size_t const addr, ImU32& color) {
+        for (auto const& highlight_range : Ranges) {
+            if (highlight_range.RangeStartAddress <= addr && addr >= highlight_range.RangeEndAddress) {
+                color = highlight_range.RangeColor;
+                return true;
+            }
+        }
+        return false;
+    }
 
     void CalcSizes(Sizes& s, size_t mem_size, size_t base_display_addr)
     {
@@ -287,7 +309,7 @@ struct MemoryEditor
                         ImGui::PopID();
                     }
 
-                    ImU32 greyout_zeros_color = IM_COL32(127, 255, 127, 127);
+                    ImU32 highlight_range_color;
                     ImU8 b = mem_data[addr];
 
                     // Draw highlight
@@ -305,10 +327,11 @@ struct MemoryEditor
                             if (OptMidColsCount > 0 && n > 0 && (n + 1) < Cols && ((n + 1) % OptMidColsCount) == 0)
                                 highlight_width += s.SpacingBetweenMidCols;
                         }
+
                         ImU32 highlight_color = IM_COL32(255, 127, 127, 255);
-                        if (b == 0 && OptGreyOutZeroes)
+                        if (IsInRange(addr, highlight_range_color))
                         {
-                            highlight_color = (highlight_color * 0.75f + greyout_zeros_color * 0.25f);
+                            highlight_color = (highlight_color * 0.75f + highlight_range_color * 0.25f);
                             highlight_color = (highlight_color ^ IM_COL32_A_MASK);
                             highlight_color = highlight_color | (50 << IM_COL32_A_SHIFT);
                         } else {
@@ -316,7 +339,7 @@ struct MemoryEditor
                             highlight_color = highlight_color | (50 << IM_COL32_A_SHIFT);
                         }
                         draw_list->AddRectFilled(pos, ImVec2(pos.x + highlight_width, pos.y + s.LineHeight), highlight_color);
-                    } else if (b == 0 && OptGreyOutZeroes) {
+                    } else if (IsInRange(addr, highlight_range_color)) {
                         ImVec2 pos = ImGui::GetCursorScreenPos();
                         float highlight_width = s.GlyphWidth * 2;
                         bool is_next_byte_highlighted = (addr + 1 < mem_size) && ((HighlightMax != (size_t)-1 && addr + 1 < HighlightMax) || (HighlightFn && HighlightFn(mem_data, addr + 1)));
@@ -326,8 +349,9 @@ struct MemoryEditor
                             if (OptMidColsCount > 0 && n > 0 && (n + 1) < Cols && ((n + 1) % OptMidColsCount) == 0)
                                 highlight_width += s.SpacingBetweenMidCols;
                         }
-                        draw_list->AddRectFilled(pos, ImVec2(pos.x + highlight_width, pos.y + s.LineHeight), greyout_zeros_color);
+                        draw_list->AddRectFilled(pos, ImVec2(pos.x + highlight_width, pos.y + s.LineHeight), highlight_range_color);
                     }
+
 
                     if (OptShowHexII) {
                         if ((b >= 32 && b < 128))
