@@ -49,6 +49,7 @@
 #pragma once
 
 #include <stdio.h>      // sprintf, scanf
+#include <ctype.h>      // toupper
 #include <stdint.h>     // uint8_t, etc.
 #include <vector>      // std::vector
 
@@ -113,8 +114,6 @@ struct MemoryEditor
     bool            ReadOnly;                                   // = false  // disable any editing.
     int             Cols;                                       // = 16     // number of columns to display.
     bool            OptShowOptions;                             // = true   // display options button/context menu. when disabled, options will be locked unless you provide your own UI for them.
-    bool            OptShowDataPreview;                         // = false  // display a footer previewing the decimal/binary/hex/float representation of the currently selected bytes.
-    bool            OptShowHexII;                               // = false  // display values in HexII representation instead of regular hexadecimal: hide null/zero bytes, ascii values as ".X".
     bool            OptShowAscii;                               // = true   // display ASCII representation on the right side.
     bool            OptGreyOutZeroes;                           // = true   // display null/zero bytes using the TextDisabled color.
     bool            OptUpperCaseHex;                            // = true   // display hexadecimal values as "FF" instead of "ff".
@@ -132,10 +131,14 @@ struct MemoryEditor
     size_t          DataEditingAddr;
     bool            DataEditingTakeFocus;
     char            AddrInputBuf[32];
+    char            ValueConverterInputBuf[32];
     size_t          GotoAddr;
     size_t          HighlightMin, HighlightMax;
+    size_t          ValueToConvert;
     int             PreviewEndianess;
-    ImGuiDataType   PreviewDataType;
+    DataType_       PreviewDataType;
+    DataType_       ConvertValueType;
+    DataFormat      ConvertValueFormat;
     std::vector<HighlightRange> Ranges;
 
     MemoryEditor(HighlightRange* ranges, size_t const ranges_size)
@@ -149,14 +152,12 @@ struct MemoryEditor
         ReadOnly = false;
         Cols = 14;
         OptShowOptions = true;
-        OptShowDataPreview = true;
-        OptShowHexII = false;
         OptShowAscii = true;
         OptGreyOutZeroes = true;
         OptUpperCaseHex = true;
         OptMidColsCount = 8;
         OptAddrDigitsCount = 0;
-        OptFooterExtraHeight = 0.0f;
+        OptFooterExtraHeight = 5.0f;
         ReadFn = NULL;
         WriteFn = NULL;
         HighlightFn = NULL;
@@ -167,10 +168,15 @@ struct MemoryEditor
         DataPreviewAddr = DataEditingAddr = (size_t)-1;
         DataEditingTakeFocus = false;
         memset(AddrInputBuf, 0, sizeof(AddrInputBuf));
+        memset(ValueConverterInputBuf, 0, sizeof(ValueConverterInputBuf));
+        memcpy(ValueConverterInputBuf, "0", 1);
         GotoAddr = (size_t)-1;
+        ValueToConvert = 0;
         HighlightMin = HighlightMax = (size_t)-1;
         PreviewEndianess = 0;
-        PreviewDataType = ImGuiDataType_S32;
+        PreviewDataType = DataType_S32;
+        ConvertValueType = DataType_U32;
+        ConvertValueFormat = DataFormat_Hex;
     }
 
     void GotoAddrAndHighlight(size_t addr_min, size_t addr_max)
@@ -272,8 +278,7 @@ struct MemoryEditor
         float footer_height = OptFooterExtraHeight;
         if (OptShowOptions)
             footer_height += height_separator + ImGui::GetFrameHeightWithSpacing() * 1;
-        if (OptShowDataPreview)
-            footer_height += height_separator + ImGui::GetFrameHeightWithSpacing() * 1 + ImGui::GetTextLineHeightWithSpacing() * 3;
+        footer_height += height_separator + ImGui::GetFrameHeightWithSpacing() * 1 + ImGui::GetTextLineHeightWithSpacing() * 3;
         ImGui::BeginChild("##scrolling", ImVec2(0, -footer_height), false, ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoNav);
         ImDrawList* draw_list = ImGui::GetWindowDrawList();
 
@@ -292,7 +297,7 @@ struct MemoryEditor
         if (DataPreviewAddr >= mem_size)
             DataPreviewAddr = (size_t)-1;
 
-        size_t preview_data_type_size = OptShowDataPreview ? DataTypeGetSize(PreviewDataType) : 0;
+        size_t preview_data_type_size = DataTypeGetSize(PreviewDataType);
         size_t data_editing_addr_next = (size_t)-1;
 
         // Draw vertical separator
@@ -362,18 +367,7 @@ struct MemoryEditor
                     }
 
 
-                    if (OptShowHexII) {
-                        if ((b >= 32 && b < 128))
-                            ImGui::Text(".%c ", b);
-                        else if (b == 0xFF && OptGreyOutZeroes)
-                            ImGui::TextDisabled("## ");
-                        else if (b == 0x00)
-                            ImGui::Text("   ");
-                        else
-                            ImGui::Text(format_byte_space, b);
-                    } else {
-                        ImGui::Text(format_byte_space, b);
-                    }
+                    ImGui::Text(format_byte_space, b);
 
                     if (!ReadOnly && ImGui::IsItemHovered() && ImGui::IsMouseClicked(0))
                     {
@@ -395,7 +389,7 @@ struct MemoryEditor
                         DataEditingTakeFocus = true;
                     }
                     ImGui::PopID();
-                    
+
                     for (int n = 0; n < Cols && addr < mem_size; n++, addr++)
                     {
                         bool is_highlight_from_user_range = (addr >= HighlightMin && addr < HighlightMax);
@@ -429,7 +423,7 @@ struct MemoryEditor
             DataEditingTakeFocus = true;
         }
 
-        const bool lock_show_data_preview = OptShowDataPreview;
+        const bool lock_show_data_preview = true;
         if (OptShowOptions)
         {
             ImGui::Separator();
@@ -456,8 +450,6 @@ struct MemoryEditor
         {
             ImGui::SetNextItemWidth(s.GlyphWidth * 7 + style.FramePadding.x * 2.0f);
             if (ImGui::DragInt("##cols", &Cols, 0.2f, 4, 32, "%d cols")) { ContentsWidthChanged = true; if (Cols < 1) Cols = 1; }
-            ImGui::Checkbox("Show Data Preview", &OptShowDataPreview);
-            ImGui::Checkbox("Show HexII", &OptShowHexII);
             if (ImGui::Checkbox("Show Ascii", &OptShowAscii)) { ContentsWidthChanged = true; }
             ImGui::Checkbox("Grey out zeroes", &OptGreyOutZeroes);
             ImGui::Checkbox("Uppercase Hex", &OptUpperCaseHex);
@@ -498,34 +490,165 @@ struct MemoryEditor
         IM_UNUSED(base_display_addr);
         ImU8* mem_data = (ImU8*)mem_data_void;
         ImGuiStyle& style = ImGui::GetStyle();
-        ImGui::AlignTextToFramePadding();
-        ImGui::Text("Preview as:");
-        ImGui::SameLine();
-        ImGui::SetNextItemWidth((s.GlyphWidth * 10.0f) + style.FramePadding.x * 2.0f + style.ItemInnerSpacing.x);
-        if (ImGui::BeginCombo("##combo_type", DataTypeGetDesc(PreviewDataType), ImGuiComboFlags_HeightLargest))
-        {
-            for (int n = 0; n < DataType_COUNT; n++)
-                if (ImGui::Selectable(DataTypeGetDesc(n), PreviewDataType == n))
-                    PreviewDataType = (ImGuiDataType)n;
-            ImGui::EndCombo();
-        }
-        ImGui::SameLine();
-        ImGui::SetNextItemWidth((s.GlyphWidth * 6.0f) + style.FramePadding.x * 2.0f + style.ItemInnerSpacing.x);
-        ImGui::Combo("##combo_endianess", &PreviewEndianess, "LE\0BE\0\0");
+        if (ImGui::CollapsingHeader("Preview Data")) {
+            ImGui::AlignTextToFramePadding();
+            ImGui::Text("Preview as:");
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth((s.GlyphWidth * 10.0f) + style.FramePadding.x * 2.0f + style.ItemInnerSpacing.x);
+            if (ImGui::BeginCombo("##combo_type", DataTypeGetDesc(PreviewDataType), ImGuiComboFlags_HeightLargest))
+            {
+                for (int n = 0; n < DataType_COUNT; n++)
+                    if (ImGui::Selectable(DataTypeGetDesc(n), PreviewDataType == n))
+                        PreviewDataType = (DataType_)n;
+                ImGui::EndCombo();
+            }
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth((s.GlyphWidth * 6.0f) + style.FramePadding.x * 2.0f + style.ItemInnerSpacing.x);
+            ImGui::Combo("##combo_endianess", &PreviewEndianess, "LE\0BE\0\0");
 
-        char buf[128] = "";
-        float x = s.GlyphWidth * 6.0f;
-        bool has_value = DataPreviewAddr != (size_t)-1;
-        if (has_value)
-            DrawPreviewData(DataPreviewAddr, mem_data, mem_size, PreviewDataType, DataFormat_Dec, buf, (size_t)IM_ARRAYSIZE(buf));
-        ImGui::Text("Dec"); ImGui::SameLine(x); ImGui::TextUnformatted(has_value ? buf : "N/A");
-        if (has_value)
-            DrawPreviewData(DataPreviewAddr, mem_data, mem_size, PreviewDataType, DataFormat_Hex, buf, (size_t)IM_ARRAYSIZE(buf));
-        ImGui::Text("Hex"); ImGui::SameLine(x); ImGui::TextUnformatted(has_value ? buf : "N/A");
-        if (has_value)
-            DrawPreviewData(DataPreviewAddr, mem_data, mem_size, PreviewDataType, DataFormat_Bin, buf, (size_t)IM_ARRAYSIZE(buf));
-        buf[IM_ARRAYSIZE(buf) - 1] = 0;
-        ImGui::Text("Bin"); ImGui::SameLine(x); ImGui::TextUnformatted(has_value ? buf : "N/A");
+            char buf[128] = "";
+            float x = s.GlyphWidth * 6.0f;
+            bool has_value = DataPreviewAddr != (size_t)-1;
+            if (has_value)
+                DrawPreviewData(DataPreviewAddr, mem_data, mem_size, PreviewDataType, DataFormat_Dec, buf, (size_t)IM_ARRAYSIZE(buf));
+            ImGui::Text("Dec"); ImGui::SameLine(x); ImGui::TextUnformatted(has_value ? buf : "N/A");
+            if (has_value)
+                DrawPreviewData(DataPreviewAddr, mem_data, mem_size, PreviewDataType, DataFormat_Hex, buf, (size_t)IM_ARRAYSIZE(buf));
+            ImGui::Text("Hex"); ImGui::SameLine(x); ImGui::TextUnformatted(has_value ? buf : "N/A");
+            if (has_value)
+                DrawPreviewData(DataPreviewAddr, mem_data, mem_size, PreviewDataType, DataFormat_Bin, buf, (size_t)IM_ARRAYSIZE(buf));
+            buf[IM_ARRAYSIZE(buf) - 1] = 0;
+            ImGui::Text("Bin"); ImGui::SameLine(x); ImGui::TextUnformatted(has_value ? buf : "N/A");
+        }
+        if (ImGui::CollapsingHeader("Converter WIP")) {
+            char buf[128] = "";
+            bool force_input_update = false;
+            float x = s.GlyphWidth * 6.0f;
+            ImGuiInputTextFlags flags = ImGuiInputTextFlags_AutoSelectAll;
+
+            ImGui::AlignTextToFramePadding();
+            ImGui::Text("From:");
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth((s.GlyphWidth * 10.0f) + style.FramePadding.x * 2.0f + style.ItemInnerSpacing.x);
+            if (ImGui::BeginCombo("##combo_convert_format", DataFormatGetDesc(ConvertValueFormat)))
+            {
+                auto const prev_format = ConvertValueFormat;
+                for (int n = 0; n < DataFormat_COUNT; n++)
+                    if (ImGui::Selectable(DataFormatGetDesc(n), ConvertValueFormat == n))
+                        ConvertValueFormat = (DataFormat)n;
+
+                switch (ConvertValueFormat) {
+                    case DataFormat_Hex: {
+                        flags |= ImGuiInputTextFlags_CharsHexadecimal;
+                        /* HEX view of the value */
+                        if (prev_format != ConvertValueFormat)
+                            ImSnprintf(ValueConverterInputBuf, sizeof(ValueConverterInputBuf), "%X", ValueToConvert);
+                        break;
+                    }
+                    case DataFormat_Bin:
+                    case DataFormat_Dec:
+                    default: {
+                        flags |= ImGuiInputTextFlags_CharsDecimal;
+                        /* Decimal view of the value */
+                        if (prev_format != ConvertValueFormat) {
+                            if ((ConvertValueType % 2) == 0) {
+                                ImSnprintf(ValueConverterInputBuf, sizeof(ValueConverterInputBuf), "%ld", ValueToConvert);
+                            } else {
+                                ImSnprintf(ValueConverterInputBuf, sizeof(ValueConverterInputBuf), "%lu", ValueToConvert);
+                            }
+                        }
+                        break;
+                    }
+                }
+
+                force_input_update = true;
+                ImGui::EndCombo();
+            }
+            ImGui::SameLine();
+            ImGui::Text("Value:");
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth((s.GlyphWidth * 10.0f) + style.FramePadding.x * 2.0f + style.ItemInnerSpacing.x);
+            if (ImGui::BeginCombo("##combo_convert_type", DataTypeGetDesc(ConvertValueType), ImGuiComboFlags_HeightLargest))
+            {
+                auto prev_type = ConvertValueType;
+                for (int n = 0; n < DataType_COUNT; n++)
+                    if (ImGui::Selectable(DataTypeGetDesc(n), ConvertValueType == n))
+                        ConvertValueType = (DataType_)n;
+
+                if (ConvertValueFormat == DataFormat_Hex) {
+                    /* HEX is not converted */
+                    ImSnprintf(ValueConverterInputBuf, sizeof(ValueConverterInputBuf), "%X", ValueToConvert);
+                } else if (prev_type >= DataType_HalfFloat) {
+                    /* From Float -> SOME */
+                    if (ConvertValueType <= DataType_U64) {
+                        /* From Float -> Int */
+                        if ((ConvertValueType % 2) == 0) {
+                            ImSnprintf(ValueConverterInputBuf, sizeof(ValueConverterInputBuf), "%ld", ValueToConvert);
+                        } else {
+                            ImSnprintf(ValueConverterInputBuf, sizeof(ValueConverterInputBuf), "%lu", ValueToConvert);
+                        }
+                    }
+                } else {
+                    /* From Int -> SOME */
+                    if (ConvertValueType <= DataType_U64) {
+                        /* From Int -> Int */
+                        if (((prev_type % 2) == 0) && ((ConvertValueType % 2) == 1)) {
+                            /* From Int -> Uint */
+                            ImSnprintf(ValueConverterInputBuf, sizeof(ValueConverterInputBuf), "%lu", ValueToConvert);
+                        }
+                    }
+                    if (ConvertValueType >= DataType_HalfFloat) {
+                        /* From Int -> Float */
+                        ImSnprintf(ValueConverterInputBuf, sizeof(ValueConverterInputBuf), "%lf", *(double*)&ValueToConvert);
+                    }
+                }
+
+                force_input_update = true;
+                ImGui::EndCombo();
+            }
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth((s.AddrDigitsCount + 1) * s.GlyphWidth + style.FramePadding.x * 2.0f);
+            if (force_input_update || ImGui::InputText("##value_to_convert", ValueConverterInputBuf, IM_ARRAYSIZE(ValueConverterInputBuf), flags))
+            {
+                switch (ConvertValueFormat) {
+                    case DataFormat_Hex: {
+                        sscanf(ValueConverterInputBuf, "%" _PRISizeT "X", &ValueToConvert);
+                        break;
+                    }
+                    case DataFormat_Bin:
+                    case DataFormat_Dec:
+                    default: {
+                        if (ConvertValueType == DataType_HalfFloat) {
+                            sscanf(ValueConverterInputBuf, "%hf", &ValueToConvert);
+                        } else if (ConvertValueType == DataType_Float) {
+                            sscanf(ValueConverterInputBuf, "%f", &ValueToConvert);
+                        } else if (ConvertValueType == DataType_Double) {
+                            sscanf(ValueConverterInputBuf, "%lf", &ValueToConvert);
+                        } else {
+                            if ((ConvertValueType % 2) == 0) {
+                                /* Read signed */
+                                sscanf(ValueConverterInputBuf, "%ld", &ValueToConvert);
+                            } else {
+                                /* Read unsigned */
+                                sscanf(ValueConverterInputBuf, "%lu", &ValueToConvert);
+                            }
+                        }
+                        break;
+                    }
+                }
+            }
+            DrawPreviewData(ValueToConvert, nullptr, 0, ConvertValueType, DataFormat_Dec, buf, (size_t)IM_ARRAYSIZE(buf));
+            ImGui::Text("Dec"); ImGui::SameLine(x); ImGui::TextUnformatted(buf);
+            DrawPreviewData(ValueToConvert, nullptr, 0, ConvertValueType, DataFormat_Hex, buf, (size_t)IM_ARRAYSIZE(buf));
+            ImGui::Text("Hex"); ImGui::SameLine(x); ImGui::TextUnformatted(buf);
+            DrawPreviewData(ValueToConvert, nullptr, 0, ConvertValueType, DataFormat_Bin, buf, (size_t)IM_ARRAYSIZE(buf));
+            ImGui::Text("Bin"); ImGui::SameLine(x); ImGui::TextUnformatted(buf);
+        }
+        if (ImGui::CollapsingHeader("Notes")) {
+            ImGui::Text("Dec");
+            ImGui::Text("Hex");
+            ImGui::Text("Bin");
+        }
     }
 
     // Utilities for Data Preview
@@ -539,11 +662,11 @@ struct MemoryEditor
     size_t DataTypeGetSize(ImGuiDataType data_type) const
     {
         const size_t sizes[] = { 1, 1, 2, 2, 4, 4, 8, 8, sizeof(_Float16), sizeof(float), sizeof(double) };
-        IM_ASSERT(data_type >= 0 && data_type < ImGuiDataType_COUNT);
+        IM_ASSERT(data_type >= 0 && data_type < DataType_COUNT);
         return sizes[data_type];
     }
 
-    const char* DataFormatGetDesc(DataFormat data_format) const
+    const char* DataFormatGetDesc(int data_format) const
     {
         const char* descs[] = { "Bin", "Dec", "Hex" };
         IM_ASSERT(data_format >= 0 && data_format < DataFormat_COUNT);
@@ -621,11 +744,16 @@ struct MemoryEditor
         uint8_t buf[8];
         size_t elem_size = DataTypeGetSize(data_type);
         size_t size = addr + elem_size > mem_size ? mem_size - addr : elem_size;
-        if (ReadFn)
-            for (int i = 0, n = (int)size; i < n; ++i)
-                buf[i] = ReadFn(mem_data, addr + i);
-        else
-            memcpy(buf, mem_data + addr, size);
+        if (mem_data != nullptr) {
+            if (ReadFn)
+                for (int i = 0, n = (int)size; i < n; ++i)
+                    buf[i] = ReadFn(mem_data, addr + i);
+            else
+                memcpy(buf, mem_data + addr, size);
+        } else {
+            size = elem_size;
+            memcpy(buf, (void*)&addr, size);
+        }
 
         if (data_format == DataFormat_Bin)
         {
