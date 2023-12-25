@@ -117,6 +117,20 @@ struct MemoryEditor
         size_t RangeEndAddress; // Exclusive
     };
 
+
+    template<typename T>
+    static bool IsInRange(std::vector<T> const& ranges, size_t const addr, Color& color) {
+        for (size_t idx = ranges.size() - 1; idx != size_t(-1); idx -= 1)
+        {
+            auto const& highlight_range = ranges.at(idx);
+            if (highlight_range.RangeStartAddress <= addr && addr < highlight_range.RangeEndAddress) {
+                color = highlight_range.RangeColor;
+                return true;
+            }
+        }
+        return false;
+    }
+
     // Settings
     bool Open;                                                  // = true   // set to false when DrawWindow() was closed. ignore if not using DrawWindow().
     bool            ReadOnly;                                   // = false  // disable any editing.
@@ -188,16 +202,6 @@ struct MemoryEditor
         ConvertValueType = DataType_U32;
         ConvertValueFormat = DataFormat_Hex;
         DEFAULT_NOTE_COLOR = IM_COL32(255, 200, 0, 255);
-
-        // TEMP:
-        Notes.push_back(NoteRange{
-            .RangeColor = Color{
-                .id = IM_COL32(255, 0, 127, 255),
-            },
-            .Description = "File id",
-            .RangeStartAddress = 0,
-            .RangeEndAddress = 4,
-        });
     }
 
     void GotoAddrAndHighlight(size_t addr_min, size_t addr_max)
@@ -222,18 +226,6 @@ struct MemoryEditor
 
         Sizes() { memset(this, 0, sizeof(*this)); }
     };
-
-    bool IsInRange(size_t const addr, Color& color) {
-        for (size_t idx = Ranges.size() - 1; idx != size_t(-1); idx -= 1)
-        {
-            auto const& highlight_range = Ranges.at(idx);
-            if (highlight_range.RangeStartAddress <= addr && addr < highlight_range.RangeEndAddress) {
-                color = highlight_range.RangeColor;
-                return true;
-            }
-        }
-        return false;
-    }
 
     void CalcSizes(Sizes& s, size_t mem_size, size_t base_display_addr)
     {
@@ -367,14 +359,20 @@ struct MemoryEditor
 
                         Color highlight_color;
                         highlight_color.id = HighlightColor;
-                        if (IsInRange(addr, highlight_range_color))
+                        if (IsInRange(Ranges, addr, highlight_range_color))
                         {
                             highlight_color.r = ((uint)highlight_color.r + (uint)highlight_range_color.r) / 2;
                             highlight_color.g = ((uint)highlight_color.g + (uint)highlight_range_color.g) / 2;
                             highlight_color.b = ((uint)highlight_color.b + (uint)highlight_range_color.b) / 2;
                         }
                         draw_list->AddRectFilled(pos, ImVec2(pos.x + highlight_width, pos.y + s.LineHeight), highlight_color.id);
-                    } else if (IsInRange(addr, highlight_range_color)) {
+                        if (IsInRange(Notes, addr, highlight_range_color)) {
+                            highlight_width = s.HexCellWidth;
+                            if (OptMidColsCount > 0 && n > 0 && (n + 1) < Cols && ((n + 1) % OptMidColsCount) == 0)
+                                highlight_width += s.SpacingBetweenMidCols;
+                            draw_list->AddRect(pos, ImVec2(pos.x + highlight_width, pos.y + s.LineHeight), highlight_range_color.id, 0.0f, ImDrawFlags_RoundCornersNone | ImDrawFlags_Closed, 1);
+                        }
+                    } else if (IsInRange(Ranges, addr, highlight_range_color)) {
                         ImVec2 pos = ImGui::GetCursorScreenPos();
                         float highlight_width = s.GlyphWidth * 2;
                         bool is_next_byte_highlighted = (addr + 1 < mem_size) && ((HighlightMax != (size_t)-1 && addr + 1 < HighlightMax) || (HighlightFn && HighlightFn(mem_data, addr + 1)));
@@ -385,8 +383,19 @@ struct MemoryEditor
                                 highlight_width += s.SpacingBetweenMidCols;
                         }
                         draw_list->AddRectFilled(pos, ImVec2(pos.x + highlight_width, pos.y + s.LineHeight), highlight_range_color.id);
+                        if (IsInRange(Notes, addr, highlight_range_color)) {
+                            highlight_width = s.HexCellWidth;
+                            if (OptMidColsCount > 0 && n > 0 && (n + 1) < Cols && ((n + 1) % OptMidColsCount) == 0)
+                                highlight_width += s.SpacingBetweenMidCols;
+                            draw_list->AddRect(pos, ImVec2(pos.x + highlight_width, pos.y + s.LineHeight), highlight_range_color.id, 0.0f, ImDrawFlags_RoundCornersNone | ImDrawFlags_Closed, 1);
+                        }
+                    } else if (IsInRange(Notes, addr, highlight_range_color)) {
+                        ImVec2 pos = ImGui::GetCursorScreenPos();
+                        float highlight_width = s.HexCellWidth;
+                        if (OptMidColsCount > 0 && n > 0 && (n + 1) < Cols && ((n + 1) % OptMidColsCount) == 0)
+                            highlight_width += s.SpacingBetweenMidCols;
+                        draw_list->AddRect(pos, ImVec2(pos.x + highlight_width, pos.y + s.LineHeight), highlight_range_color.id, 0.0f, ImDrawFlags_RoundCornersNone | ImDrawFlags_Closed, 1);
                     }
-
 
                     ImGui::Text(format_byte_space, b);
 
