@@ -109,6 +109,14 @@ struct MemoryEditor
         size_t RangeEndAddress; // Exclusive
     };
 
+    struct NoteRange {
+        static size_t const DESCRIPTION_SIZE = 128;
+        Color  RangeColor;
+        char   Description[DESCRIPTION_SIZE];
+        size_t RangeStartAddress; // Inclusive
+        size_t RangeEndAddress; // Exclusive
+    };
+
     // Settings
     bool Open;                                                  // = true   // set to false when DrawWindow() was closed. ignore if not using DrawWindow().
     bool            ReadOnly;                                   // = false  // disable any editing.
@@ -124,6 +132,7 @@ struct MemoryEditor
     ImU8            (*ReadFn)(const ImU8 *data, size_t off);    // = 0      // optional handler to read bytes.
     void            (*WriteFn)(ImU8* data, size_t off, ImU8 d); // = 0      // optional handler to write bytes.
     bool            (*HighlightFn)(const ImU8* data, size_t off);//= 0      // optional handler to return Highlight property (to support non-contiguous highlighting).
+    ImU32           DEFAULT_NOTE_COLOR;
 
     // [Internal State]
     bool            ContentsWidthChanged;
@@ -140,6 +149,7 @@ struct MemoryEditor
     DataType_       ConvertValueType;
     DataFormat      ConvertValueFormat;
     std::vector<HighlightRange> Ranges;
+    std::vector<NoteRange> Notes;
 
     MemoryEditor(HighlightRange* ranges, size_t const ranges_size)
     {
@@ -177,6 +187,17 @@ struct MemoryEditor
         PreviewDataType = DataType_S32;
         ConvertValueType = DataType_U32;
         ConvertValueFormat = DataFormat_Hex;
+        DEFAULT_NOTE_COLOR = IM_COL32(255, 200, 0, 255);
+
+        // TEMP:
+        Notes.push_back(NoteRange{
+            .RangeColor = Color{
+                .id = IM_COL32(255, 0, 127, 255),
+            },
+            .Description = "File id",
+            .RangeStartAddress = 0,
+            .RangeEndAddress = 4,
+        });
     }
 
     void GotoAddrAndHighlight(size_t addr_min, size_t addr_max)
@@ -487,6 +508,7 @@ struct MemoryEditor
 
     void DrawPreviewLine(const Sizes& s, void* mem_data_void, size_t mem_size, size_t base_display_addr)
     {
+        size_t const note_fields_count = 5;
         IM_UNUSED(base_display_addr);
         ImU8* mem_data = (ImU8*)mem_data_void;
         ImGuiStyle& style = ImGui::GetStyle();
@@ -645,9 +667,109 @@ struct MemoryEditor
             ImGui::Text("Bin"); ImGui::SameLine(x); ImGui::TextUnformatted(buf);
         }
         if (ImGui::CollapsingHeader("Notes")) {
-            ImGui::Text("Dec");
-            ImGui::Text("Hex");
-            ImGui::Text("Bin");
+            float const TEXT_BASE_WIDTH = ImGui::CalcTextSize("A").x;
+            auto const table_flags = ImGuiTableFlags_RowBg
+                             | ImGuiTableFlags_Borders
+                             | ImGuiTableFlags_BordersH
+                             | ImGuiTableFlags_BordersOuterH
+                             | ImGuiTableFlags_BordersV
+                             | ImGuiTableFlags_BordersOuterV
+                             | ImGuiTableFlags_SizingFixedFit;
+
+            if (ImGui::BeginTable("##NotesTable", note_fields_count, table_flags))
+            {
+                ImGui::TableSetupColumn("#Add/Del");
+                ImGui::TableSetupColumn("Color");
+                ImGui::TableSetupColumn("Start");
+                ImGui::TableSetupColumn("End");
+                ImGui::TableSetupColumn("Description");
+
+                ImGui::TableNextRow(ImGuiTableRowFlags_Headers);
+                for (size_t column = 0; column < note_fields_count; column++)
+                {
+                    ImGui::TableSetColumnIndex(column);
+                    const char* column_name = ImGui::TableGetColumnName(column); // Retrieve name passed to TableSetupColumn()
+                    ImGui::PushID(column);
+                    if (column == 0) {
+                        if (ImGui::Button("+##add", ImVec2(TEXT_BASE_WIDTH * 4.0f, 0.0f))) {
+                            Notes.push_back(NoteRange{
+                                .RangeColor = DEFAULT_NOTE_COLOR,
+                                .Description = "Some description",
+                                .RangeStartAddress = 0,
+                                .RangeEndAddress = 1,
+                            });
+                        }
+                    } else {
+                        ImGui::TableHeader(column_name);
+                    }
+                    ImGui::PopID();
+                }
+
+                for (size_t row = 0; row < Notes.size(); row++) {
+                    ImGui::TableNextRow();
+
+                    char buf[16+2];
+                    auto &note = Notes[row];
+
+                    int column = 0;
+                    ImGui::TableSetColumnIndex(column);
+                    ImGui::PushID(row * note_fields_count + column);
+                    if (ImGui::Button("Del", ImVec2(TEXT_BASE_WIDTH * 4.0f, 0.0f))) {
+
+                    }
+                    ImGui::PopID();
+
+                    ++column;
+                    ImGui::TableSetColumnIndex(column);
+                    ImGui::PushID(row * note_fields_count + column);
+                    float color[3] = {note.RangeColor.r/255.0f, note.RangeColor.g/255.0f, note.RangeColor.b/255.0f};
+                    auto const color_edit_flags = ImGuiColorEditFlags_NoInputs
+                                                | ImGuiColorEditFlags_NoLabel
+                                                | ImGuiColorEditFlags_NoAlpha
+                                                | ImGuiColorEditFlags_NoOptions;
+                    if (ImGui::ColorEdit4("##color", (float *)color, color_edit_flags)) {
+                        note.RangeColor.r = color[0] * 255;
+                        note.RangeColor.g = color[1] * 255;
+                        note.RangeColor.b = color[2] * 255;
+                    };
+                    ImGui::PopID();
+
+                    ++column;
+                    ImGui::TableSetColumnIndex(column);
+                    ImGui::PushID(row * note_fields_count + column);
+                    ImGui::PushItemWidth(TEXT_BASE_WIDTH * 18.0f);
+                    /* InputScalar */ {
+                        ImSnprintf(buf, IM_ARRAYSIZE(buf), "0x%lX", note.RangeStartAddress);
+                        if (ImGui::InputText("##range_start", buf, IM_ARRAYSIZE(buf), ImGuiInputTextFlags_CharsHexadecimal)) {
+                            sscanf(buf, "0x%lX", &note.RangeStartAddress);
+                        }
+                    }
+                    ImGui::PopItemWidth();
+                    ImGui::PopID();
+
+                    ++column;
+                    ImGui::TableSetColumnIndex(column);
+                    ImGui::PushID(row * note_fields_count + column);
+                    ImGui::PushItemWidth(TEXT_BASE_WIDTH * 18.0f);
+                    /* InputScalar */ {
+                        ImSnprintf(buf, IM_ARRAYSIZE(buf), "0x%lX", note.RangeEndAddress);
+                        if (ImGui::InputText("##range_end", buf, IM_ARRAYSIZE(buf), ImGuiInputTextFlags_CharsHexadecimal)) {
+                            sscanf(buf, "0x%lX", &note.RangeEndAddress);
+                        }
+                    }
+                    ImGui::PopItemWidth();
+                    ImGui::PopID();
+
+                    ++column;
+                    ImGui::TableSetColumnIndex(column);
+                    ImGui::PushID(row * note_fields_count + column);
+                    ImGui::PushItemWidth(ImGui::GetContentRegionAvail().x * 1.1f);
+                    ImGui::InputText("##description", note.Description, note.DESCRIPTION_SIZE);
+                    ImGui::PopItemWidth();
+                    ImGui::PopID();
+                }
+                ImGui::EndTable();
+            }
         }
     }
 
