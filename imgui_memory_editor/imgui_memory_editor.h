@@ -291,7 +291,7 @@ struct MemoryEditor
         float footer_height = OptFooterExtraHeight;
         if (OptShowOptions)
             footer_height += height_separator + ImGui::GetFrameHeightWithSpacing() * 1;
-        footer_height += height_separator + ImGui::GetFrameHeightWithSpacing() * 1 + ImGui::GetTextLineHeightWithSpacing() * 3;
+        footer_height += height_separator + ImGui::GetFrameHeightWithSpacing() * 1 + ImGui::GetTextLineHeightWithSpacing() * 15;
         ImGui::BeginChild("##scrolling", ImVec2(0, -footer_height), false, ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoNav);
         ImDrawList* draw_list = ImGui::GetWindowDrawList();
 
@@ -724,7 +724,7 @@ struct MemoryEditor
                     ImGui::TableSetColumnIndex(column);
                     ImGui::PushID(row * note_fields_count + column);
                     if (ImGui::Button("Del", ImVec2(TEXT_BASE_WIDTH * 4.0f, 0.0f))) {
-
+                        Notes.erase(Notes.begin() + row);
                     }
                     ImGui::PopID();
 
