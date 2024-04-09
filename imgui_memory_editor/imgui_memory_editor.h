@@ -122,7 +122,6 @@ struct MemoryEditor
 
     template<typename T>
     static bool IsInRange(std::vector<T> const& ranges, size_t const addr, Color& color) {
-        // IMPORTANT: OPTIMIZE!!!!
         ZoneScopedN("MemoryEditor::IsInRange");
 
         if (ranges.size() == 0L) {
