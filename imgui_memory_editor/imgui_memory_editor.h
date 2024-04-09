@@ -52,6 +52,9 @@
 #include <ctype.h>      // toupper
 #include <stdint.h>     // uint8_t, etc.
 #include <vector>      // std::vector
+#include <../../../include/log.hpp>
+
+#include "../../tracy/public/tracy/Tracy.hpp"
 
 #ifdef _MSC_VER
 #define _PRISizeT   "I"
@@ -104,30 +107,59 @@ struct MemoryEditor
     };
 
     struct HighlightRange {
-        Color RangeColor;
         size_t RangeStartAddress; // Inclusive
         size_t RangeEndAddress; // Exclusive
+        Color RangeColor;
     };
 
     struct NoteRange {
-        static size_t const DESCRIPTION_SIZE = 128;
-        Color  RangeColor;
-        char   Description[DESCRIPTION_SIZE];
-        size_t RangeStartAddress; // Inclusive
-        size_t RangeEndAddress; // Exclusive
+        size_t       RangeStartAddress; // Inclusive
+        size_t       RangeEndAddress; // Exclusive
+        Color        RangeColor;
+        std::string  Description;
     };
 
 
     template<typename T>
     static bool IsInRange(std::vector<T> const& ranges, size_t const addr, Color& color) {
-        for (size_t idx = ranges.size() - 1; idx != size_t(-1); idx -= 1)
-        {
-            auto const& highlight_range = ranges.at(idx);
-            if (highlight_range.RangeStartAddress <= addr && addr < highlight_range.RangeEndAddress) {
-                color = highlight_range.RangeColor;
-                return true;
-            }
+        // IMPORTANT: OPTIMIZE!!!!
+        ZoneScopedN("MemoryEditor::IsInRange");
+
+        if (ranges.size() == 0L) {
+            return false;
         }
+
+        if (ranges.size() < 100L) {
+            for (size_t idx = 0L; idx < ranges.size(); idx += 1) {
+                auto const& highlight_range = ranges.at(idx);
+                if (highlight_range.RangeStartAddress <= addr && addr < highlight_range.RangeEndAddress) {
+                    color = highlight_range.RangeColor;
+
+                    return true;
+                }
+            }
+        } else {
+            // NOTE: Assume ordered ranges
+            size_t startRange = ranges.front().RangeStartAddress;
+            size_t endRange = ranges.back().RangeEndAddress;
+
+            if (addr < startRange || addr > endRange) {
+                return false;
+            }
+
+            T val;
+            return std::binary_search(ranges.begin(), ranges.end(), val, [addr, &color](T const& highlight_range, T const& unused) {
+                LT_UNUSED(unused);
+
+                if (highlight_range.RangeStartAddress <= addr && addr < highlight_range.RangeEndAddress) {
+                    color = highlight_range.RangeColor;
+
+                    return true;
+                }
+                return false;
+            });
+        }
+
         return false;
     }
 
@@ -324,11 +356,15 @@ struct MemoryEditor
         const char* format_address = OptUpperCaseHex ? "%0*" _PRISizeT "X: " : "%0*" _PRISizeT "x: ";
         const char* format_byte_space = OptUpperCaseHex ? "%02X " : "%02x ";
 
-        while (clipper.Step())
+        while (clipper.Step()) {
+            ZoneScopedN("MemoryEditor::DrawContents-clipperStep");
+
             for (int line_i = clipper.DisplayStart; line_i < clipper.DisplayEnd; line_i++) // display only visible lines
             {
                 size_t addr = (size_t)(line_i * Cols);
                 ImGui::Text(format_address, s.AddrDigitsCount, base_display_addr + addr);
+                {
+                ZoneScopedN("MemoryEditor::DrawContents-DrawHexadecimal");
 
                 // Draw Hexadecimal
                 for (int n = 0; n < Cols && addr < mem_size; n++, addr++)
@@ -347,6 +383,7 @@ struct MemoryEditor
                     bool is_highlight_from_preview = (addr >= DataPreviewAddr && addr < DataPreviewAddr + preview_data_type_size);
                     if (is_highlight_from_user_range || is_highlight_from_user_func || is_highlight_from_preview)
                     {
+                        ZoneScopedN("MemoryEditor::DrawContents-Regular");
                         ImVec2 pos = ImGui::GetCursorScreenPos();
                         float highlight_width = s.GlyphWidth * 2;
                         bool is_next_byte_highlighted = (addr + 1 < mem_size) && ((HighlightMax != (size_t)-1 && addr + 1 < HighlightMax) || (HighlightFn && HighlightFn(mem_data, addr + 1)));
@@ -405,9 +442,11 @@ struct MemoryEditor
                         data_editing_addr_next = addr;
                     }
                 }
-
+                }
                 if (OptShowAscii)
                 {
+                    ZoneScopedN("MemoryEditor::DrawContents-OptShowAscii");
+
                     // Draw ASCII values
                     ImGui::SameLine(s.PosAsciiStart);
                     ImVec2 pos = ImGui::GetCursorScreenPos();
@@ -436,6 +475,7 @@ struct MemoryEditor
                     }
                 }
             }
+        }
         ImGui::PopStyleVar(2);
         ImGui::EndChild();
 
@@ -702,10 +742,10 @@ struct MemoryEditor
                     if (column == 0) {
                         if (ImGui::Button("+##add", ImVec2(TEXT_BASE_WIDTH * 4.0f, 0.0f))) {
                             Notes.push_back(NoteRange{
-                                .RangeColor = DEFAULT_NOTE_COLOR,
-                                .Description = "Some description",
                                 .RangeStartAddress = 0,
                                 .RangeEndAddress = 1,
+                                .RangeColor = DEFAULT_NOTE_COLOR,
+                                .Description = "Some description",
                             });
                         }
                     } else {
@@ -773,7 +813,7 @@ struct MemoryEditor
                     ImGui::TableSetColumnIndex(column);
                     ImGui::PushID(row * note_fields_count + column);
                     ImGui::PushItemWidth(ImGui::GetContentRegionAvail().x * 1.1f);
-                    ImGui::InputText("##description", note.Description, note.DESCRIPTION_SIZE);
+                    ImGui::InputText("##description", note.Description.data(), note.Description.size());
                     ImGui::PopItemWidth();
                     ImGui::PopID();
                 }
