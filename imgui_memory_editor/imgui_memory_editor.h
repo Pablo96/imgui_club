@@ -109,7 +109,8 @@ struct MemoryEditor
     struct HighlightRange {
         size_t RangeStartAddress; // Inclusive
         size_t RangeEndAddress; // Exclusive
-        Color RangeColor;
+        Color  RangeColor;
+        bool   isActive = true;
     };
 
     struct NoteRange {
@@ -117,8 +118,8 @@ struct MemoryEditor
         size_t       RangeEndAddress; // Exclusive
         Color        RangeColor;
         std::string  Description;
+        bool         isActive = true;
     };
-
 
     template<typename T>
     static bool IsInRange(std::vector<T> const& ranges, size_t const addr, Color& color) {
@@ -134,7 +135,7 @@ struct MemoryEditor
                 if (highlight_range.RangeStartAddress <= addr && addr < highlight_range.RangeEndAddress) {
                     color = highlight_range.RangeColor;
 
-                    return true;
+                    return highlight_range.isActive;
                 }
             }
         } else {
@@ -146,16 +147,17 @@ struct MemoryEditor
                 return false;
             }
 
-            T val;
+            T val; // unitialized to save time since it is not used
             return std::binary_search(ranges.begin(), ranges.end(), val, [addr, &color](T const& highlight_range, T const& unused) {
                 LT_UNUSED(unused);
 
                 if (highlight_range.RangeStartAddress <= addr && addr < highlight_range.RangeEndAddress) {
                     color = highlight_range.RangeColor;
 
-                    return true;
+                    // std::binary_search ask for inequality operator, NOT EQUALITY operator
+                    return !highlight_range.isActive;
                 }
-                return false;
+                return true;
             });
         }
 
@@ -556,7 +558,7 @@ struct MemoryEditor
 
     void DrawPreviewLine(const Sizes& s, void* mem_data_void, size_t mem_size, size_t base_display_addr)
     {
-        size_t const note_fields_count = 5;
+        size_t const note_fields_count = 6;
         IM_UNUSED(base_display_addr);
         ImU8* mem_data = (ImU8*)mem_data_void;
         ImGuiStyle& style = ImGui::GetStyle();
@@ -727,6 +729,7 @@ struct MemoryEditor
             if (ImGui::BeginTable("##NotesTable", note_fields_count, table_flags))
             {
                 ImGui::TableSetupColumn("#Add/Del");
+                ImGui::TableSetupColumn("Active");
                 ImGui::TableSetupColumn("Color");
                 ImGui::TableSetupColumn("Start");
                 ImGui::TableSetupColumn("End");
@@ -765,6 +768,13 @@ struct MemoryEditor
                     if (ImGui::Button("Del", ImVec2(TEXT_BASE_WIDTH * 4.0f, 0.0f))) {
                         Notes.erase(Notes.begin() + row);
                     }
+                    ImGui::PopID();
+                    
+                    ++column;
+                    ImGui::TableSetColumnIndex(column);
+                    ImGui::PushID(row * note_fields_count + column);
+                    if (ImGui::Checkbox("##isActive", &note.isActive)) {
+                    };
                     ImGui::PopID();
 
                     ++column;
