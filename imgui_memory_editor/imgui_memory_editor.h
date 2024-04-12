@@ -53,6 +53,7 @@
 #include <stdint.h>     // uint8_t, etc.
 #include <vector>      // std::vector
 #include <../../../include/log.hpp>
+#include <../../../include/algorithms/binary_search.hpp>
 
 #include "../../tracy/public/tracy/Tracy.hpp"
 
@@ -110,7 +111,7 @@ struct MemoryEditor
         size_t RangeStartAddress; // Inclusive
         size_t RangeEndAddress; // Exclusive
         Color  RangeColor;
-        bool   isActive = true;
+        bool   isActive;
     };
 
     struct NoteRange {
@@ -118,7 +119,7 @@ struct MemoryEditor
         size_t       RangeEndAddress; // Exclusive
         Color        RangeColor;
         std::string  Description;
-        bool         isActive = true;
+        bool         isActive;
     };
 
     template<typename T>
@@ -148,16 +149,23 @@ struct MemoryEditor
             }
 
             T val; // unitialized to save time since it is not used
-            return std::binary_search(ranges.begin(), ranges.end(), val, [addr, &color](T const& highlight_range, T const& unused) {
+            return lt::algorithms::binary_search<T, s32, typename std::vector<T>::const_iterator>(ranges.cbegin(), ranges.cend(), val, [addr, &color](T const& highlight_range, T const& unused) -> s32 {
                 LT_UNUSED(unused);
 
-                if (highlight_range.RangeStartAddress <= addr && addr < highlight_range.RangeEndAddress) {
-                    color = highlight_range.RangeColor;
-
-                    // std::binary_search ask for inequality operator, NOT EQUALITY operator
-                    return !highlight_range.isActive;
+                if (addr < highlight_range.RangeStartAddress) {
+                    return s32(-1);
                 }
-                return true;
+
+                if (addr >= highlight_range.RangeEndAddress) {
+                    return s32(1);
+                }
+
+                if (highlight_range.isActive) {
+                    color = highlight_range.RangeColor;
+                    return s32(0);
+                };
+
+                return lt::algorithms::cancel_search<s32>();
             });
         }
 
@@ -614,7 +622,7 @@ struct MemoryEditor
                         flags |= ImGuiInputTextFlags_CharsHexadecimal;
                         /* HEX view of the value */
                         if (prev_format != ConvertValueFormat)
-                            ImSnprintf(ValueConverterInputBuf, sizeof(ValueConverterInputBuf), "%X", ValueToConvert);
+                            ImSnprintf(ValueConverterInputBuf, sizeof(ValueConverterInputBuf), "%lX", ValueToConvert);
                         break;
                     }
                     case DataFormat_Bin:
@@ -649,7 +657,7 @@ struct MemoryEditor
 
                 if (ConvertValueFormat == DataFormat_Hex) {
                     /* HEX is not converted */
-                    ImSnprintf(ValueConverterInputBuf, sizeof(ValueConverterInputBuf), "%X", ValueToConvert);
+                    ImSnprintf(ValueConverterInputBuf, sizeof(ValueConverterInputBuf), "%lX", ValueToConvert);
                 } else if (prev_type >= DataType_HalfFloat) {
                     /* From Float -> SOME */
                     if (ConvertValueType <= DataType_U64) {
@@ -691,11 +699,12 @@ struct MemoryEditor
                     case DataFormat_Dec:
                     default: {
                         if (ConvertValueType == DataType_HalfFloat) {
-                            sscanf(ValueConverterInputBuf, "%hf", &ValueToConvert);
+                            f32 _f16 = *(f16*)&ValueToConvert;
+                            sscanf(ValueConverterInputBuf, "%f", &_f16);
                         } else if (ConvertValueType == DataType_Float) {
-                            sscanf(ValueConverterInputBuf, "%f", &ValueToConvert);
+                            sscanf(ValueConverterInputBuf, "%f", (f32*)&ValueToConvert);
                         } else if (ConvertValueType == DataType_Double) {
-                            sscanf(ValueConverterInputBuf, "%lf", &ValueToConvert);
+                            sscanf(ValueConverterInputBuf, "%lf", (f64*) &ValueToConvert);
                         } else {
                             if ((ConvertValueType % 2) == 0) {
                                 /* Read signed */
@@ -748,6 +757,7 @@ struct MemoryEditor
                                 .RangeEndAddress = 1,
                                 .RangeColor = DEFAULT_NOTE_COLOR,
                                 .Description = "Some description",
+                                .isActive = true
                             });
                         }
                     } else {
