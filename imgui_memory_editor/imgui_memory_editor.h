@@ -585,8 +585,6 @@ struct MemoryEditor
         constexpr float HORIZONTAL_PADDING = 2.f;
         constexpr float VERTICAL_PADDING = 0.0f;// LINE_THICKNESS / 4.f;
 
-        auto const &note = this->Notes[note_idx];
-
         bool is_space_in_between = false;
         if ((OptMidColsCount > 0) && (colIdx > 0) && ((colIdx + 1) < Cols) && (((colIdx + 1) % OptMidColsCount) == 0)){
             is_space_in_between = true;
@@ -613,47 +611,7 @@ struct MemoryEditor
 
         size_t const lastLineAddr = addr + size_t(Cols - colIdx - 1);
 
-        size_t const nextLineFirstAddr = lastLineAddr + 1;
-
-        bool const noteDoesntEndInSameLine = nextLineFirstAddr < note.RangeEndAddress;
-
-        size_t const cellAddrBellow = nextLineFirstAddr + colIdx;
-
-        NoteRange rangesInNextLine = {};
-
-        size_t const noteStartIdx = note_idx + 1;
-        for (size_t noteIdx = noteStartIdx; noteIdx < Notes.size(); noteIdx += 1) {
-            auto const &note = Notes[noteIdx];
-            if (nextLineFirstAddr >= note.RangeStartAddress) {
-                if (cellAddrBellow < note.RangeEndAddress) {
-                    if (noteIdx == noteStartIdx) {
-                        rangesInNextLine.RangeStartAddress = note.RangeStartAddress;
-                    }
-                    rangesInNextLine.RangeEndAddress = note.RangeEndAddress;
-                    rangesInNextLine.isActive = note.isActive;
-                } else {
-                    break;
-                }
-            }
-        }
-
-        bool const cellAddrBellowBellongToRangesInNextLine = cellAddrBellow < rangesInNextLine.RangeEndAddress;
-
-        bool const cellAddrBellowRangeIsActive = rangesInNextLine.isActive;
-
-        bool const hasAnotherNoteBelow = cellAddrBellowBellongToRangesInNextLine && cellAddrBellowRangeIsActive;
-
-        bool const cellBelowInSameNote = cellAddrBellow < note.RangeEndAddress;
-
-        bool const hasSameNoteBelow = noteDoesntEndInSameLine && cellBelowInSameNote;
-
-        bool const hasNoteBelow = hasSameNoteBelow || hasAnotherNoteBelow;
-
-        bool const isNotLastLine = lineIdx < line_max_idx;
-
-        bool const hasRangeBelow = isNotLastLine && hasNoteBelow;
-
-        bool const notRangeBelow = !hasRangeBelow;
+        bool const notRangeBelow = !hasRangeBelow(lastLineAddr, note_idx, colIdx, line_max_idx);
 
         if (is_space_in_between || notRangeBelow) {
             // Horizontal Bottom
@@ -668,6 +626,54 @@ struct MemoryEditor
             // Vertical Right
             draw_list->AddLine(ImVec2(pos.x + highlight_width, pos.y + VERTICAL_PADDING), ImVec2(pos.x + highlight_width, pos.y + s.LineHeight + VERTICAL_PADDING), highlight_range_color.id, LINE_THICKNESS);
         }
+    }
+
+    bool hasRangeBelow(size_t lastLineAddr, size_t note_idx, size_t colIdx, size_t line_max_idx) {
+
+        size_t const nextLineFirstAddr = lastLineAddr + 1;
+
+
+        size_t const cellAddrBellow = nextLineFirstAddr + colIdx;
+
+        NoteRange rangesInNextLine = {0};
+        bool const noteDoesntEndInSameLine = false;
+        bool cellBelowInSameNote = false;
+        if (note_idx < this->Notes.size()){
+            nextLineFirstAddr < this->Notes[note_idx].RangeEndAddress;
+            auto const &note = this->Notes[note_idx];
+            cellBelowInSameNote = cellAddrBellow < note.RangeEndAddress;
+            size_t const noteStartIdx = note_idx + 1;
+            for (size_t noteIdx = noteStartIdx; noteIdx < Notes.size(); noteIdx += 1) {
+                auto const &note = Notes[noteIdx];
+                if (nextLineFirstAddr >= note.RangeStartAddress) {
+                    if (cellAddrBellow < note.RangeEndAddress) {
+                        if (noteIdx == noteStartIdx) {
+                            rangesInNextLine.RangeStartAddress = note.RangeStartAddress;
+                        }
+                        rangesInNextLine.RangeEndAddress = note.RangeEndAddress;
+                        rangesInNextLine.isActive = note.isActive;
+                    } else {
+                        break;
+                    }
+                }
+            }
+        }
+
+        bool const cellAddrBellowBellongToRangesInNextLine = cellAddrBellow < rangesInNextLine.RangeEndAddress;
+
+        bool const cellAddrBellowRangeIsActive = rangesInNextLine.isActive;
+
+        bool const hasAnotherNoteBelow = cellAddrBellowBellongToRangesInNextLine && cellAddrBellowRangeIsActive;
+
+        bool const hasSameNoteBelow = noteDoesntEndInSameLine && cellBelowInSameNote;
+
+        bool const hasNoteBelow = hasSameNoteBelow || hasAnotherNoteBelow;
+
+        bool const isNotLastLine = lineIdx < line_max_idx;
+
+        bool const hasRangeBelow = isNotLastLine && hasNoteBelow;
+
+        return hasRangeBelow;
     }
 
     void DrawOptionsLine(const Sizes& s, void* mem_data, size_t mem_size, size_t base_display_addr)
