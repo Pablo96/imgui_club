@@ -52,6 +52,7 @@
 #include <ctype.h>      // toupper
 #include <stdint.h>     // uint8_t, etc.
 #include <vector>      // std::vector
+#include <limits>      // std::numeric_limits
 #include <../../../include/log.hpp>
 #include <../../../include/algorithms/binary_search.hpp>
 
@@ -130,7 +131,7 @@ struct MemoryEditor
     };
 
     template<typename T>
-    static RangePosition IsInRange(std::vector<T> const& ranges, size_t const addr, Color& color, T* out_range = nullptr) {
+    static RangePosition IsInRange(std::vector<T> const& ranges, size_t const addr, Color& color, size_t* out_range_idx = nullptr) {
         ZoneScopedN("MemoryEditor::IsInRange");
 
         if (ranges.size() == 0L) {
@@ -155,8 +156,8 @@ struct MemoryEditor
                         return RangePosition::NotInRange;
                     }
 
-                    if (out_range != nullptr) {
-                        *out_range = highlight_range;
+                    if (out_range_idx != nullptr) {
+                        *out_range_idx = idx;
                     }
 
                     if (addr == highlight_range.RangeStartAddress) {
@@ -172,7 +173,8 @@ struct MemoryEditor
             }
         } else {
             T val; // unitialized to save time since it is not used
-            auto const [found, range] = lt::algorithms::binary_find<T, s32, typename std::vector<T>::const_iterator>(ranges.cbegin(), ranges.cend(), val, [addr, &color](T const& highlight_range, T const& unused) -> s32 {
+            LT_UNINITIALIZED(val);
+            auto const [found, idx] = lt::algorithms::binary_find<T, s32, typename std::vector<T>::const_iterator>(ranges.cbegin(), ranges.cend(), val, [addr, &color](T const& highlight_range, T const& unused) -> s32 {
                 LT_UNUSED(unused);
 
                 if (addr < highlight_range.RangeStartAddress) {
@@ -191,13 +193,16 @@ struct MemoryEditor
                 return lt::algorithms::cancel_search<s32>();
             });
 
+
             if (!found) {
                 return RangePosition::NotInRange;
             }
 
-            if (out_range != nullptr) {
-                *out_range = range;
+            if (out_range_idx != nullptr) {
+                *out_range_idx = idx;
             }
+
+            auto const& range = ranges[idx];
 
             if (addr == range.RangeStartAddress) {
                 return RangePosition::Start;
@@ -225,9 +230,9 @@ struct MemoryEditor
     int             OptAddrDigitsCount;                         // = 0      // number of addr digits to display (default calculated based on maximum displayed addr).
     float           OptFooterExtraHeight;                       // = 0      // space to reserve at the bottom of the widget to add custom widgets
     ImU32           HighlightColor;                             //          // background color of highlighted bytes.
-    ImU8            (*ReadFn)(const ImU8 *data, size_t off);    // = 0      // optional handler to read bytes.
+    ImU8            (*ReadFn)(ImU8 const* data, size_t off);    // = 0      // optional handler to read bytes.
     void            (*WriteFn)(ImU8* data, size_t off, ImU8 d); // = 0      // optional handler to write bytes.
-    bool            (*HighlightFn)(const ImU8* data, size_t off);//= 0      // optional handler to return Highlight property (to support non-contiguous highlighting).
+    bool            (*HighlightFn)(ImU8 const* data, size_t off);//= 0      // optional handler to return Highlight property (to support non-contiguous highlighting).
     ImU32           DEFAULT_NOTE_COLOR;
 
     // [Internal State]
@@ -271,14 +276,14 @@ struct MemoryEditor
 
         // State/Internals
         ContentsWidthChanged = false;
-        DataPreviewAddr = DataEditingAddr = (size_t)-1;
+        DataPreviewAddr = DataEditingAddr = std::numeric_limits<size_t>::max();
         DataEditingTakeFocus = false;
         memset(AddrInputBuf, 0, sizeof(AddrInputBuf));
         memset(ValueConverterInputBuf, 0, sizeof(ValueConverterInputBuf));
         memcpy(ValueConverterInputBuf, "0", 1);
-        GotoAddr = (size_t)-1;
+        GotoAddr = std::numeric_limits<size_t>::max();
         ValueToConvert = 0;
-        HighlightMin = HighlightMax = (size_t)-1;
+        HighlightMin = HighlightMax = std::numeric_limits<size_t>::max();
         PreviewEndianess = 0;
         PreviewDataType = DataType_S32;
         ConvertValueType = DataType_U32;
@@ -388,12 +393,12 @@ struct MemoryEditor
         bool data_next = false;
 
         if (ReadOnly || DataEditingAddr >= mem_size)
-            DataEditingAddr = (size_t)-1;
+            DataEditingAddr = std::numeric_limits<size_t>::max();
         if (DataPreviewAddr >= mem_size)
-            DataPreviewAddr = (size_t)-1;
+            DataPreviewAddr = std::numeric_limits<size_t>::max();
 
         size_t preview_data_type_size = DataTypeGetSize(PreviewDataType);
-        size_t data_editing_addr_next = (size_t)-1;
+        size_t data_editing_addr_next = std::numeric_limits<size_t>::max();
 
         // Draw vertical separator
         ImVec2 window_pos = ImGui::GetWindowPos();
@@ -426,53 +431,56 @@ struct MemoryEditor
 
                     Color highlight_range_color;
                     ImU8 b = mem_data[addr];
-                    NoteRange noteRange;
+                    size_t note_idx = std::numeric_limits<size_t>::max();
+                    size_t range_idx = note_idx;
 
                     // Draw highlight
-                    bool is_highlight_from_user_range = (addr >= HighlightMin && addr < HighlightMax);
+                    bool is_highlight_from_user_range = ((addr >= HighlightMin) && (addr < HighlightMax));
                     bool is_highlight_from_user_func  = (HighlightFn && HighlightFn(mem_data, addr));
-                    bool is_highlight_from_preview    = (addr >= DataPreviewAddr && addr < DataPreviewAddr + preview_data_type_size);
+                    bool is_highlight_from_preview    = ((addr >= DataPreviewAddr) && (addr < (DataPreviewAddr + preview_data_type_size)));
                     if (is_highlight_from_user_range || is_highlight_from_user_func || is_highlight_from_preview) {
                         ZoneScopedN("MemoryEditor::DrawContents-Regular");
+
+                        Color highlight_color;
+                        highlight_color.id = HighlightColor;
+                        if (IsInRange(Ranges, addr, highlight_range_color, &range_idx) != RangePosition::NotInRange) {
+                            highlight_color.r = ((uint)highlight_color.r + (uint)highlight_range_color.r) / 2;
+                            highlight_color.g = ((uint)highlight_color.g + (uint)highlight_range_color.g) / 2;
+                            highlight_color.b = ((uint)highlight_color.b + (uint)highlight_range_color.b) / 2;
+                        }
+
                         ImVec2 pos = ImGui::GetCursorScreenPos();
                         float highlight_width = s.GlyphWidth * 2;
-                        bool is_next_byte_highlighted = (addr + 1 < mem_size) && ((HighlightMax != (size_t)-1 && addr + 1 < HighlightMax) || (HighlightFn && HighlightFn(mem_data, addr + 1)));
+                        bool is_next_byte_highlighted = isNextByteHighlighted(addr, mem_size, preview_data_type_size, range_idx, mem_data);
                         if (is_next_byte_highlighted || (colIdx + 1 == Cols)) {
                             highlight_width = s.HexCellWidth;
                             if (OptMidColsCount > 0 && colIdx > 0 && (colIdx + 1) < Cols && ((colIdx + 1) % OptMidColsCount) == 0)
                                 highlight_width += s.SpacingBetweenMidCols;
                         }
 
-                        Color highlight_color;
-                        highlight_color.id = HighlightColor;
-                        if (IsInRange(Ranges, addr, highlight_range_color) != RangePosition::NotInRange) {
-                            highlight_color.r = ((uint)highlight_color.r + (uint)highlight_range_color.r) / 2;
-                            highlight_color.g = ((uint)highlight_color.g + (uint)highlight_range_color.g) / 2;
-                            highlight_color.b = ((uint)highlight_color.b + (uint)highlight_range_color.b) / 2;
-                        }
                         draw_list->AddRectFilled(pos, ImVec2(pos.x + highlight_width, pos.y + s.LineHeight), highlight_color.id);
-                        if (auto range_position = IsInRange(Notes, addr, highlight_range_color, &noteRange); range_position != RangePosition::NotInRange) {
+                        if (auto range_position = IsInRange(Notes, addr, highlight_range_color, &note_idx); range_position != RangePosition::NotInRange) {
                             highlight_width = s.HexCellWidth;
-                            drawNoteRect(draw_list, noteRange, addr, pos, highlight_range_color, range_position, highlight_width, colIdx, line_idx, s);
+                            drawNoteRect(draw_list, note_idx, addr, pos, highlight_range_color, range_position, highlight_width, colIdx, line_idx, s);
                         }
-                    } else if (IsInRange(Ranges, addr, highlight_range_color) != RangePosition::NotInRange) {
+                    } else if (IsInRange(Ranges, addr, highlight_range_color, &range_idx) != RangePosition::NotInRange) {
                         ImVec2 pos = ImGui::GetCursorScreenPos();
                         float highlight_width = s.GlyphWidth * 2;
-                        bool is_next_byte_highlighted = (addr + 1 < mem_size) && ((HighlightMax != (size_t)-1 && addr + 1 < HighlightMax) || (HighlightFn && HighlightFn(mem_data, addr + 1)));
+                        bool is_next_byte_highlighted = isNextByteHighlighted(addr, mem_size, preview_data_type_size, range_idx, mem_data);
                         if (is_next_byte_highlighted || (colIdx + 1 == Cols)) {
                             highlight_width = s.HexCellWidth;
                             if (OptMidColsCount > 0 && colIdx > 0 && (colIdx + 1) < Cols && ((colIdx + 1) % OptMidColsCount) == 0)
                                 highlight_width += s.SpacingBetweenMidCols;
                         }
                         draw_list->AddRectFilled(pos, ImVec2(pos.x + highlight_width, pos.y + s.LineHeight), highlight_range_color.id);
-                        if (auto range_position = IsInRange(Notes, addr, highlight_range_color, &noteRange); range_position != RangePosition::NotInRange) {
+                        if (auto range_position = IsInRange(Notes, addr, highlight_range_color, &note_idx); range_position != RangePosition::NotInRange) {
                             highlight_width = s.HexCellWidth;
-                            drawNoteRect(draw_list, noteRange, addr, pos, highlight_range_color, range_position, highlight_width, colIdx, line_idx, s);
+                            drawNoteRect(draw_list, note_idx, addr, pos, highlight_range_color, range_position, highlight_width, colIdx, line_idx, s);
                         }
-                    } else if (auto range_position = IsInRange(Notes, addr, highlight_range_color, &noteRange); range_position != RangePosition::NotInRange) {
+                    } else if (auto range_position = IsInRange(Notes, addr, highlight_range_color, &note_idx); range_position != RangePosition::NotInRange) {
                         ImVec2 pos = ImGui::GetCursorScreenPos();
                         float highlight_width = s.HexCellWidth;
-                        drawNoteRect(draw_list, noteRange, addr, pos, highlight_range_color, range_position, highlight_width, colIdx, line_idx, s);
+                        drawNoteRect(draw_list, note_idx, addr, pos, highlight_range_color, range_position, highlight_width, colIdx, line_idx, s);
                     }
 
                     ImGui::Text(format_byte_space, b);
@@ -511,6 +519,7 @@ struct MemoryEditor
                         unsigned char c = ReadFn ? ReadFn(mem_data, addr) : mem_data[addr];
                         char display_c = (c < 32 || c >= 128) ? '.' : c;
                         draw_list->AddText(pos, (display_c == c) ? color_text : color_disabled, &display_c, &display_c + 1);
+
                         pos.x += s.GlyphWidth;
                     }
                 }
@@ -528,7 +537,7 @@ struct MemoryEditor
             DataEditingAddr = DataPreviewAddr = DataEditingAddr + 1;
             DataEditingTakeFocus = true;
         }
-        else if (data_editing_addr_next != (size_t)-1)
+        else if (data_editing_addr_next != std::numeric_limits<size_t>::max())
         {
             DataEditingAddr = DataPreviewAddr = data_editing_addr_next;
             DataEditingTakeFocus = true;
@@ -548,9 +557,19 @@ struct MemoryEditor
         }
     }
 
+    bool isNextByteHighlighted(size_t const addr, size_t const mem_size, size_t const preview_data_type_size, size_t const rangeIdx, ImU8 const* mem_data) {
+        auto const isNotLastAddr         = (addr + 1)                  < mem_size;
+        auto const highlighMaxWasSet     = HighlightMax               != std::numeric_limits<size_t>::max();
+        auto const highlighFromFn        = HighlightFn                && HighlightFn(mem_data, addr + 1);
+        auto const isNotLastHighlighAddr = (addr + 1)                  < HighlightMax;
+        auto const highlightFromPreview  = (addr + 1)                  < (DataPreviewAddr + preview_data_type_size);
+        auto const isNotLastInRange      = (rangeIdx < Ranges.size()) && ((addr + 1 ) < Ranges[rangeIdx].RangeEndAddress);
+        return isNotLastAddr && ((highlighMaxWasSet && isNotLastHighlighAddr) || highlighFromFn || highlightFromPreview || isNotLastInRange);
+    }
+
     void drawNoteRect(
         ImDrawList *draw_list,
-        NoteRange const note,
+        size_t const note_idx,
         size_t const addr,
         ImVec2 pos,
         MemoryEditor::Color const highlight_range_color,
@@ -563,6 +582,9 @@ struct MemoryEditor
         constexpr float LINE_THICKNESS = 2.f;
         constexpr float HORIZONTAL_PADDING = 2.f;
         constexpr float VERTICAL_PADDING = 0.0f;// LINE_THICKNESS / 4.f;
+
+        auto const &note = this->Notes[note_idx];
+
         bool is_space_in_between = false;
         if ((OptMidColsCount > 0) && (colIdx > 0) && ((colIdx + 1) < Cols) && (((colIdx + 1) % OptMidColsCount) == 0)){
             is_space_in_between = true;
@@ -629,11 +651,11 @@ struct MemoryEditor
             if (sscanf(AddrInputBuf, "%" _PRISizeT "X", &goto_addr) == 1)
             {
                 GotoAddr = goto_addr - base_display_addr;
-                HighlightMin = HighlightMax = (size_t)-1;
+                HighlightMin = HighlightMax = std::numeric_limits<size_t>::max();
             }
         }
 
-        if (GotoAddr != (size_t)-1)
+        if (GotoAddr != std::numeric_limits<size_t>::max())
         {
             if (GotoAddr < mem_size)
             {
@@ -643,7 +665,7 @@ struct MemoryEditor
                 DataEditingAddr = DataPreviewAddr = GotoAddr;
                 DataEditingTakeFocus = true;
             }
-            GotoAddr = (size_t)-1;
+            GotoAddr = std::numeric_limits<size_t>::max();
         }
     }
 
@@ -671,7 +693,7 @@ struct MemoryEditor
 
             char buf[128] = "";
             float x = s.GlyphWidth * 6.0f;
-            bool has_value = DataPreviewAddr != (size_t)-1;
+            bool has_value = DataPreviewAddr != std::numeric_limits<size_t>::max();
             if (has_value)
                 DrawPreviewData(DataPreviewAddr, mem_data, mem_size, PreviewDataType, DataFormat_Dec, buf, (size_t)IM_ARRAYSIZE(buf));
             ImGui::Text("Dec"); ImGui::SameLine(x); ImGui::TextUnformatted(has_value ? buf : "N/A");
@@ -934,7 +956,7 @@ struct MemoryEditor
 
     size_t DataTypeGetSize(ImGuiDataType data_type) const
     {
-        const size_t sizes[] = { 1, 1, 2, 2, 4, 4, 8, 8, sizeof(_Float16), sizeof(float), sizeof(double) };
+        static size_t const sizes[] = { 1, 1, 2, 2, 4, 4, 8, 8, sizeof(_Float16), sizeof(float), sizeof(double) };
         IM_ASSERT(data_type >= 0 && data_type < DataType_COUNT);
         return sizes[data_type];
     }
