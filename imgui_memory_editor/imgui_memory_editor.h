@@ -416,6 +416,7 @@ struct MemoryEditor
             for (int line_i = clipper.DisplayStart; line_i < clipper.DisplayEnd; line_i++) // display only visible lines
             {
                 size_t line_idx = line_i - clipper.DisplayStart;
+                size_t line_max_idx = (clipper.DisplayEnd - clipper.DisplayStart) - 1;
                 size_t addr = (size_t)(line_i * Cols);
                 ImGui::Text(format_address, s.AddrDigitsCount, base_display_addr + addr);
                 {
@@ -461,7 +462,7 @@ struct MemoryEditor
                         draw_list->AddRectFilled(pos, ImVec2(pos.x + highlight_width, pos.y + s.LineHeight), highlight_color.id);
                         if (auto range_position = IsInRange(Notes, addr, highlight_range_color, &note_idx); range_position != RangePosition::NotInRange) {
                             highlight_width = s.HexCellWidth;
-                            drawNoteRect(draw_list, note_idx, addr, pos, highlight_range_color, range_position, highlight_width, colIdx, line_idx, s);
+                            drawNoteRect(draw_list, note_idx, addr, pos, highlight_range_color, range_position, highlight_width, colIdx, line_idx, line_max_idx, s);
                         }
                     } else if (IsInRange(Ranges, addr, highlight_range_color, &range_idx) != RangePosition::NotInRange) {
                         ImVec2 pos = ImGui::GetCursorScreenPos();
@@ -475,12 +476,12 @@ struct MemoryEditor
                         draw_list->AddRectFilled(pos, ImVec2(pos.x + highlight_width, pos.y + s.LineHeight), highlight_range_color.id);
                         if (auto range_position = IsInRange(Notes, addr, highlight_range_color, &note_idx); range_position != RangePosition::NotInRange) {
                             highlight_width = s.HexCellWidth;
-                            drawNoteRect(draw_list, note_idx, addr, pos, highlight_range_color, range_position, highlight_width, colIdx, line_idx, s);
+                            drawNoteRect(draw_list, note_idx, addr, pos, highlight_range_color, range_position, highlight_width, colIdx, line_idx, line_max_idx, s);
                         }
                     } else if (auto range_position = IsInRange(Notes, addr, highlight_range_color, &note_idx); range_position != RangePosition::NotInRange) {
                         ImVec2 pos = ImGui::GetCursorScreenPos();
                         float highlight_width = s.HexCellWidth;
-                        drawNoteRect(draw_list, note_idx, addr, pos, highlight_range_color, range_position, highlight_width, colIdx, line_idx, s);
+                        drawNoteRect(draw_list, note_idx, addr, pos, highlight_range_color, range_position, highlight_width, colIdx, line_idx, line_max_idx, s);
                     }
 
                     ImGui::Text(format_byte_space, b);
@@ -577,6 +578,7 @@ struct MemoryEditor
         float highlight_width,
         int const colIdx,
         int const lineIdx,
+        int const line_max_idx,
         MemoryEditor::Sizes const&s
     ) {
         constexpr float LINE_THICKNESS = 2.f;
@@ -603,21 +605,68 @@ struct MemoryEditor
             highlight_width += HORIZONTAL_PADDING;
         }
 
-        if (is_space_in_between || !((lineIdx > 0) && (addr - note.RangeStartAddress) > size_t(colIdx))) {
-            // Horizontal Top
-            draw_list->AddLine(ImVec2(pos.x, pos.y + VERTICAL_PADDING), ImVec2(pos.x + highlight_width, pos.y + VERTICAL_PADDING), highlight_range_color.id, LINE_THICKNESS);
+    
+        // Horizontal Top
+        draw_list->AddLine(ImVec2(pos.x, pos.y + VERTICAL_PADDING), ImVec2(pos.x + highlight_width, pos.y + VERTICAL_PADDING), highlight_range_color.id, LINE_THICKNESS);
+
+        size_t const firstLineAddr = addr - colIdx;
+
+        size_t const lastLineAddr = addr + size_t(Cols - colIdx - 1);
+
+        size_t const nextLineFirstAddr = lastLineAddr + 1;
+
+        bool const noteDoesntEndInSameLine = nextLineFirstAddr < note.RangeEndAddress;
+
+        size_t const cellAddrBellow = nextLineFirstAddr + colIdx;
+
+        NoteRange rangesInNextLine = {};
+
+        size_t const noteStartIdx = note_idx + 1;
+        for (size_t noteIdx = noteStartIdx; noteIdx < Notes.size(); noteIdx += 1) {
+            auto const &note = Notes[noteIdx];
+            if (nextLineFirstAddr >= note.RangeStartAddress) {
+                if (cellAddrBellow < note.RangeEndAddress) {
+                    if (noteIdx == noteStartIdx) {
+                        rangesInNextLine.RangeStartAddress = note.RangeStartAddress;
+                    }
+                    rangesInNextLine.RangeEndAddress = note.RangeEndAddress;
+                    rangesInNextLine.isActive = note.isActive;
+                } else {
+                    break;
+                }
+            }
         }
 
-        // Horizontal Bottom
-        draw_list->AddLine(ImVec2(pos.x, pos.y + s.LineHeight - VERTICAL_PADDING), ImVec2(pos.x + highlight_width, pos.y + s.LineHeight - VERTICAL_PADDING), highlight_range_color.id, LINE_THICKNESS);
+        bool const cellAddrBellowBellongToRangesInNextLine = cellAddrBellow < rangesInNextLine.RangeEndAddress;
 
-        if (range_position == RangePosition::Start) {
+        bool const cellAddrBellowRangeIsActive = rangesInNextLine.isActive;
+
+        bool const hasAnotherNoteBelow = cellAddrBellowBellongToRangesInNextLine && cellAddrBellowRangeIsActive;
+
+        bool const cellBelowInSameNote = cellAddrBellow < note.RangeEndAddress;
+
+        bool const hasSameNoteBelow = noteDoesntEndInSameLine && cellBelowInSameNote;
+
+        bool const hasNoteBelow = hasSameNoteBelow || hasAnotherNoteBelow;
+
+        bool const isNotLastLine = lineIdx < line_max_idx;
+
+        bool const hasRangeBelow = isNotLastLine && hasNoteBelow;
+
+        bool const notRangeBelow = !hasRangeBelow;
+
+        if (is_space_in_between || notRangeBelow) {
+            // Horizontal Bottom
+            draw_list->AddLine(ImVec2(pos.x, pos.y + s.LineHeight - VERTICAL_PADDING), ImVec2(pos.x + highlight_width, pos.y + s.LineHeight - VERTICAL_PADDING), highlight_range_color.id, LINE_THICKNESS);
+        }
+
+        if (range_position == RangePosition::Start || (addr == firstLineAddr)) {
             // Vertical Left
-            draw_list->AddLine(ImVec2(pos.x, pos.y + VERTICAL_PADDING), ImVec2(pos.x, pos.y + s.LineHeight), highlight_range_color.id, LINE_THICKNESS);
+            draw_list->AddLine(ImVec2(pos.x, pos.y + VERTICAL_PADDING), ImVec2(pos.x, pos.y + s.LineHeight + VERTICAL_PADDING), highlight_range_color.id, LINE_THICKNESS);
         }
-        if (range_position == RangePosition::End) {
+        if (range_position == RangePosition::End  || (addr == lastLineAddr)) {
             // Vertical Right
-            draw_list->AddLine(ImVec2(pos.x + highlight_width, pos.y + VERTICAL_PADDING), ImVec2(pos.x + highlight_width, pos.y + s.LineHeight), highlight_range_color.id, LINE_THICKNESS);
+            draw_list->AddLine(ImVec2(pos.x + highlight_width, pos.y + VERTICAL_PADDING), ImVec2(pos.x + highlight_width, pos.y + s.LineHeight + VERTICAL_PADDING), highlight_range_color.id, LINE_THICKNESS);
         }
     }
 
