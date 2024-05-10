@@ -51,8 +51,8 @@
 #include <stdio.h>      // sprintf, scanf
 #include <ctype.h>      // toupper
 #include <stdint.h>     // uint8_t, etc.
-#include <vector>      // std::vector
-#include <limits>      // std::numeric_limits
+#include <vector>       // std::vector
+#include <limits>       // std::numeric_limits
 #include <../../../include/log.hpp>
 #include <../../../include/algorithms/binary_search.hpp>
 
@@ -123,6 +123,7 @@ struct MemoryEditor
         bool         isActive;
     };
 
+
     enum class RangePosition : u8 {
         NotInRange = 0,
         Start,
@@ -192,7 +193,6 @@ struct MemoryEditor
 
                 return lt::algorithms::cancel_search<s32>();
             });
-
 
             if (!found) {
                 return RangePosition::NotInRange;
@@ -1003,6 +1003,7 @@ struct MemoryEditor
     size_t DataTypeGetSize(ImGuiDataType data_type) const
     {
         static size_t const sizes[] = { 1, 1, 2, 2, 4, 4, 8, 8, sizeof(_Float16), sizeof(float), sizeof(double) };
+
         IM_ASSERT(data_type >= 0 && data_type < DataType_COUNT);
         return sizes[data_type];
     }
