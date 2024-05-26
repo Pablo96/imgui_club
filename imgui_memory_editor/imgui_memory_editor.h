@@ -261,7 +261,7 @@ struct MemoryEditor
         // Settings
         Open = true;
         ReadOnly = false;
-        Cols = 14;
+        Cols = 16;
         OptShowOptions = true;
         OptShowAscii = true;
         OptGreyOutZeroes = true;
