@@ -116,6 +116,7 @@ struct MemoryEditor
     };
 
     struct NoteRange {
+        static const u8 MAX_DESCRIPTION_LEN = 15;
         size_t       RangeStartAddress; // Inclusive
         size_t       RangeEndAddress; // Exclusive
         Color        RangeColor;
@@ -718,6 +719,7 @@ struct MemoryEditor
     void DrawPreviewLine(const Sizes& s, void* mem_data_void, size_t mem_size, size_t base_display_addr)
     {
         size_t const note_fields_count = 6;
+        size_t const properties_fields_count = 3;
         IM_UNUSED(base_display_addr);
         ImU8* mem_data = (ImU8*)mem_data_void;
         ImGuiStyle& style = ImGui::GetStyle();
@@ -876,6 +878,68 @@ struct MemoryEditor
             DrawPreviewData(ValueToConvert, nullptr, 0, ConvertValueType, DataFormat_Bin, buf, (size_t)IM_ARRAYSIZE(buf));
             ImGui::Text("Bin"); ImGui::SameLine(x); ImGui::TextUnformatted(buf);
         }
+        if (ImGui::CollapsingHeader("Vertex Properties")) {
+            auto const table_flags = ImGuiTableFlags_RowBg
+                                | ImGuiTableFlags_Borders
+                                | ImGuiTableFlags_BordersH
+                                | ImGuiTableFlags_BordersOuterH
+                                | ImGuiTableFlags_BordersV
+                                | ImGuiTableFlags_BordersOuterV
+                                | ImGuiTableFlags_SizingFixedFit;
+
+            if (ImGui::BeginTable("##PropertiesTable", properties_fields_count, table_flags))
+            {
+                ImGui::TableSetupColumn("Active");
+                ImGui::TableSetupColumn("Color");
+                ImGui::TableSetupColumn("Description");
+
+                ImGui::TableNextRow(ImGuiTableRowFlags_Headers);
+                for (size_t column = 0; column < properties_fields_count; column++)
+                {
+                    ImGui::TableSetColumnIndex(column);
+                    const char* column_name = ImGui::TableGetColumnName(column); // Retrieve name passed to TableSetupColumn()
+                    ImGui::PushID(column);
+                    ImGui::TableHeader(column_name);
+                    ImGui::PopID();
+                }
+
+                for (size_t row = 0; row < Notes.size(); row++) {
+                    ImGui::TableNextRow();
+                    auto &note = Notes[row];
+
+                    int column = 0;
+                    ImGui::TableSetColumnIndex(column);
+                    ImGui::PushID(row * note_fields_count + column);
+                    if (ImGui::Checkbox("##isActive", &note.isActive)) {
+                    };
+                    ImGui::PopID();
+
+                    ++column;
+                    ImGui::TableSetColumnIndex(column);
+                    ImGui::PushID(row * note_fields_count + column);
+                    float color[3] = {note.RangeColor.r/255.0f, note.RangeColor.g/255.0f, note.RangeColor.b/255.0f};
+                    auto const color_edit_flags = ImGuiColorEditFlags_NoInputs
+                                                | ImGuiColorEditFlags_NoLabel
+                                                | ImGuiColorEditFlags_NoAlpha
+                                                | ImGuiColorEditFlags_NoOptions;
+                    if (ImGui::ColorEdit4("##color", (float *)color, color_edit_flags)) {
+                        note.RangeColor.r = color[0] * 255;
+                        note.RangeColor.g = color[1] * 255;
+                        note.RangeColor.b = color[2] * 255;
+                    };
+                    ImGui::PopID();
+
+                    ++column;
+                    ImGui::TableSetColumnIndex(column);
+                    ImGui::PushID(row * note_fields_count + column);
+                    ImGui::PushItemWidth(ImGui::GetContentRegionAvail().x * 1.1f);
+                    ImGui::Text("%s", note.Description.data());
+                    ImGui::PopItemWidth();
+                    ImGui::PopID();
+                }
+                ImGui::EndTable();
+            }
+        }
         if (ImGui::CollapsingHeader("Notes")) {
             float const TEXT_BASE_WIDTH = ImGui::CalcTextSize("A").x;
             auto const table_flags = ImGuiTableFlags_RowBg
@@ -983,7 +1047,7 @@ struct MemoryEditor
                     ImGui::TableSetColumnIndex(column);
                     ImGui::PushID(row * note_fields_count + column);
                     ImGui::PushItemWidth(ImGui::GetContentRegionAvail().x * 1.1f);
-                    ImGui::InputText("##description", note.Description.data(), note.Description.size());
+                    ImGui::InputText("##description", note.Description.data(), note.Description.capacity());
                     ImGui::PopItemWidth();
                     ImGui::PopID();
                 }
