@@ -48,11 +48,12 @@
 
 #pragma once
 
-#include <stdio.h>      // sprintf, scanf
-#include <ctype.h>      // toupper
-#include <stdint.h>     // uint8_t, etc.
-#include <vector>      // std::vector
-#include <limits>      // std::numeric_limits
+#include <stdio.h>       // sprintf, scanf
+#include <ctype.h>       // toupper
+#include <stdint.h>      // uint8_t, etc.
+#include <vector>        // std::vector
+#include <unordered_map> // std::unordered_map
+#include <limits>        // std::numeric_limits
 #include <../../../include/log.hpp>
 #include <../../../include/algorithms/binary_search.hpp>
 
@@ -108,20 +109,24 @@ struct MemoryEditor
         };
     };
 
-    struct HighlightRange {
-        size_t RangeStartAddress; // Inclusive
-        size_t RangeEndAddress; // Exclusive
-        Color  RangeColor;
-        bool   isActive;
+    struct Range {
+        size_t StartAddress; // Inclusive
+        size_t EndAddress;   // Exclusive
     };
 
-    struct NoteRange {
+    struct VertexProperty {
+        bool               IsActive;
+        Color              VPColor;
+        string             Description;
+        std::vector<Range> Ranges;
+    };
+
+    struct Note {
         static const u8 MAX_DESCRIPTION_LEN = 15;
-        size_t       RangeStartAddress; // Inclusive
-        size_t       RangeEndAddress; // Exclusive
-        Color        RangeColor;
+        Range        NoteRange;
+        Color        NoteColor;
         std::string  Description;
-        bool         isActive;
+        bool         IsActive;
     };
 
     enum class RangePosition : u8 {
@@ -131,85 +136,69 @@ struct MemoryEditor
         End,
     };
 
-    template<typename T>
-    static RangePosition IsInRange(std::vector<T> const& ranges, size_t const addr, Color& color, size_t* out_range_idx = nullptr) {
+    // NOTE: Assumes ordered ranges
+    RangePosition IsInRange(size_t const addr, Color& color, size_t* out_vertex_property_idx = nullptr, size_t* out_range_idx = nullptr) {
         ZoneScopedN("MemoryEditor::IsInRange");
 
-        if (ranges.size() == 0L) {
+        if (VertexProperties.size() == 0L) {
             return RangePosition::NotInRange;
         }
 
-        // NOTE: Assume ordered ranges
-        size_t startRange = ranges.front().RangeStartAddress;
-        size_t endRange = ranges.back().RangeEndAddress;
-
-        if (addr < startRange || addr > endRange) {
-            return RangePosition::NotInRange;
-        }
-
-        if (ranges.size() < 100L) {
-            for (size_t idx = 0L; idx < ranges.size(); idx += 1) {
-                auto const& highlight_range = ranges.at(idx);
-                if (highlight_range.RangeStartAddress <= addr && addr < highlight_range.RangeEndAddress) {
-                    color = highlight_range.RangeColor;
-
-                    if (!highlight_range.isActive) {
-                        return RangePosition::NotInRange;
-                    }
-
-                    if (out_range_idx != nullptr) {
-                        *out_range_idx = idx;
-                    }
-
-                    if (addr == highlight_range.RangeStartAddress) {
-                        return RangePosition::Start;
-                    }
-
-                    if (addr == (highlight_range.RangeEndAddress-1)) {
-                        return RangePosition::End;
-                    }
-
-                    return RangePosition::Middle;
-                }
+        for (size_t vertex_property_idx = 0L; vertex_property_idx < VertexProperties.size(); vertex_property_idx++)
+        {
+            auto vertexProperty = VertexProperties[vertex_property_idx];
+            if (!vertexProperty.IsActive) {
+                continue;
             }
-        } else {
-            T val; // unitialized to save time since it is not used
+
+            size_t startRange = VertexProperties.front().Ranges.front().StartAddress;
+            size_t endRange = VertexProperties.back().Ranges.back().EndAddress;
+
+            if (addr < startRange || addr > endRange) {
+                continue;
+            }
+
+            color = vertexProperty.VPColor;
+
+            Range val; // unitialized to save time since it is not used
             LT_UNINITIALIZED(val);
-            auto const [found, idx] = lt::algorithms::binary_find<T, s32, typename std::vector<T>::const_iterator>(ranges.cbegin(), ranges.cend(), val, [addr, &color](T const& highlight_range, T const& unused) -> s32 {
-                LT_UNUSED(unused);
+            auto const [found, idx] = lt::algorithms::binary_find<Range, s32, typename std::vector<Range>::const_iterator>(
+                vertexProperty.Ranges.cbegin(),
+                vertexProperty.Ranges.cend(),
+                val,
+                [addr, &color](Range const& highlight_range, Range const& unused) -> s32 {
+                    LT_UNUSED(unused);
 
-                if (addr < highlight_range.RangeStartAddress) {
-                    return s32(-1);
-                }
+                    if (addr < highlight_range.StartAddress) {
+                        return s32(-1);
+                    }
 
-                if (addr >= highlight_range.RangeEndAddress) {
-                    return s32(1);
-                }
+                    if (addr >= highlight_range.EndAddress) {
+                        return s32(1);
+                    }
 
-                if (highlight_range.isActive) {
-                    color = highlight_range.RangeColor;
                     return s32(0);
-                };
-
-                return lt::algorithms::cancel_search<s32>();
-            });
-
+                }
+            );
 
             if (!found) {
-                return RangePosition::NotInRange;
+                continue;
             }
 
+            if (out_vertex_property_idx != nullptr) {
+                *out_vertex_property_idx = vertex_property_idx;
+            }
             if (out_range_idx != nullptr) {
                 *out_range_idx = idx;
             }
 
-            auto const& range = ranges[idx];
+            auto const& range = vertexProperty.Ranges[idx];
 
-            if (addr == range.RangeStartAddress) {
+            if (addr == range.StartAddress) {
                 return RangePosition::Start;
             }
 
-            if (addr == (range.RangeEndAddress-1)) {
+            if (addr == (range.EndAddress-1)) {
                 return RangePosition::End;
             }
 
@@ -219,8 +208,43 @@ struct MemoryEditor
         return RangePosition::NotInRange;
     }
 
+    RangePosition IsInNotes(size_t const addr, Color& color, size_t* out_range_idx = nullptr) {
+        ZoneScopedN("MemoryEditor::IsInRange");
+
+        if (this->Notes.size() == 0L) {
+            return RangePosition::NotInRange;
+        }
+
+        for (size_t idx = 0L; idx < this->Notes.size(); idx += 1) {
+            auto const& highlight_range = this->Notes.at(idx);
+            if (highlight_range.NoteRange.StartAddress <= addr && addr < highlight_range.NoteRange.EndAddress) {
+                color = highlight_range.NoteColor;
+
+                if (!highlight_range.IsActive) {
+                    return RangePosition::NotInRange;
+                }
+
+                if (out_range_idx != nullptr) {
+                    *out_range_idx = idx;
+                }
+
+                if (addr == highlight_range.NoteRange.StartAddress) {
+                    return RangePosition::Start;
+                }
+
+                if (addr == (highlight_range.NoteRange.EndAddress-1)) {
+                    return RangePosition::End;
+                }
+
+                return RangePosition::Middle;
+            }
+        }
+
+        return RangePosition::NotInRange;
+    }
+
     // Settings
-    bool Open;                                                  // = true   // set to false when DrawWindow() was closed. ignore if not using DrawWindow().
+    bool            Open;                                       // = true   // set to false when DrawWindow() was closed. ignore if not using DrawWindow().
     bool            ReadOnly;                                   // = false  // disable any editing.
     int             Cols;                                       // = 16     // number of columns to display.
     bool            OptShowOptions;                             // = true   // display options button/context menu. when disabled, options will be locked unless you provide your own UI for them.
@@ -250,15 +274,11 @@ struct MemoryEditor
     DataType_       PreviewDataType;
     DataType_       ConvertValueType;
     DataFormat      ConvertValueFormat;
-    std::vector<HighlightRange> Ranges;
-    std::vector<NoteRange> Notes;
+    std::vector<VertexProperty> VertexProperties;
+    std::vector<Note> Notes;
 
-    MemoryEditor(HighlightRange* ranges, size_t const ranges_size)
+    MemoryEditor()
     {
-        if (ranges != nullptr) {
-            Ranges = std::vector<HighlightRange>(ranges, ranges + ranges_size);
-        }
-
         // Settings
         Open = true;
         ReadOnly = false;
@@ -434,7 +454,8 @@ struct MemoryEditor
                     Color highlight_range_color;
                     ImU8 b = mem_data[addr];
                     size_t note_idx = std::numeric_limits<size_t>::max();
-                    size_t range_idx = note_idx;
+                    size_t vertex_property_idx = std::numeric_limits<size_t>::max();
+                    size_t range_idx = std::numeric_limits<size_t>::max();
 
                     // Draw highlight
                     bool is_highlight_from_user_range = ((addr >= HighlightMin) && (addr < HighlightMax));
@@ -445,7 +466,7 @@ struct MemoryEditor
 
                         Color highlight_color;
                         highlight_color.id = HighlightColor;
-                        if (IsInRange(Ranges, addr, highlight_range_color, &range_idx) != RangePosition::NotInRange) {
+                        if (IsInRange(addr, highlight_range_color, &vertex_property_idx, &range_idx) != RangePosition::NotInRange) {
                             highlight_color.r = ((uint)highlight_color.r + (uint)highlight_range_color.r) / 2;
                             highlight_color.g = ((uint)highlight_color.g + (uint)highlight_range_color.g) / 2;
                             highlight_color.b = ((uint)highlight_color.b + (uint)highlight_range_color.b) / 2;
@@ -453,7 +474,7 @@ struct MemoryEditor
 
                         ImVec2 pos = ImGui::GetCursorScreenPos();
                         float highlight_width = s.GlyphWidth * 2;
-                        bool is_next_byte_highlighted = isNextByteHighlighted(addr, mem_size, preview_data_type_size, range_idx, mem_data);
+                        bool is_next_byte_highlighted = isNextByteHighlighted(addr, mem_size, preview_data_type_size, vertex_property_idx, range_idx, mem_data);
                         if (is_next_byte_highlighted || (colIdx + 1 == Cols)) {
                             highlight_width = s.HexCellWidth;
                             if (OptMidColsCount > 0 && colIdx > 0 && (colIdx + 1) < Cols && ((colIdx + 1) % OptMidColsCount) == 0)
@@ -461,25 +482,25 @@ struct MemoryEditor
                         }
 
                         draw_list->AddRectFilled(pos, ImVec2(pos.x + highlight_width, pos.y + s.LineHeight), highlight_color.id);
-                        if (auto range_position = IsInRange(Notes, addr, highlight_range_color, &note_idx); range_position != RangePosition::NotInRange) {
+                        if (auto range_position = IsInNotes(addr, highlight_range_color, &note_idx); range_position != RangePosition::NotInRange) {
                             highlight_width = s.HexCellWidth;
                             drawNoteRect(draw_list, note_idx, addr, pos, highlight_range_color, range_position, highlight_width, colIdx, line_idx, line_max_idx, s);
                         }
-                    } else if (IsInRange(Ranges, addr, highlight_range_color, &range_idx) != RangePosition::NotInRange) {
+                    } else if (IsInRange(addr, highlight_range_color, &vertex_property_idx, &range_idx) != RangePosition::NotInRange) {
                         ImVec2 pos = ImGui::GetCursorScreenPos();
                         float highlight_width = s.GlyphWidth * 2;
-                        bool is_next_byte_highlighted = isNextByteHighlighted(addr, mem_size, preview_data_type_size, range_idx, mem_data);
+                        bool is_next_byte_highlighted = isNextByteHighlighted(addr, mem_size, preview_data_type_size, vertex_property_idx, range_idx, mem_data);
                         if (is_next_byte_highlighted || (colIdx + 1 == Cols)) {
                             highlight_width = s.HexCellWidth;
                             if (OptMidColsCount > 0 && colIdx > 0 && (colIdx + 1) < Cols && ((colIdx + 1) % OptMidColsCount) == 0)
                                 highlight_width += s.SpacingBetweenMidCols;
                         }
                         draw_list->AddRectFilled(pos, ImVec2(pos.x + highlight_width, pos.y + s.LineHeight), highlight_range_color.id);
-                        if (auto range_position = IsInRange(Notes, addr, highlight_range_color, &note_idx); range_position != RangePosition::NotInRange) {
+                        if (auto range_position = IsInNotes(addr, highlight_range_color, &note_idx); range_position != RangePosition::NotInRange) {
                             highlight_width = s.HexCellWidth;
                             drawNoteRect(draw_list, note_idx, addr, pos, highlight_range_color, range_position, highlight_width, colIdx, line_idx, line_max_idx, s);
                         }
-                    } else if (auto range_position = IsInRange(Notes, addr, highlight_range_color, &note_idx); range_position != RangePosition::NotInRange) {
+                    } else if (auto range_position = IsInNotes(addr, highlight_range_color, &note_idx); range_position != RangePosition::NotInRange) {
                         ImVec2 pos = ImGui::GetCursorScreenPos();
                         float highlight_width = s.HexCellWidth;
                         drawNoteRect(draw_list, note_idx, addr, pos, highlight_range_color, range_position, highlight_width, colIdx, line_idx, line_max_idx, s);
@@ -559,13 +580,13 @@ struct MemoryEditor
         }
     }
 
-    bool isNextByteHighlighted(size_t const addr, size_t const mem_size, size_t const preview_data_type_size, size_t const rangeIdx, ImU8 const* mem_data) {
+    bool isNextByteHighlighted(size_t const addr, size_t const mem_size, size_t const preview_data_type_size, size_t const vertexPropertyIdx, size_t const rangeIdx, ImU8 const* mem_data) {
         auto const isNotLastAddr         = (addr + 1)                  < mem_size;
         auto const highlighMaxWasSet     = HighlightMax               != std::numeric_limits<size_t>::max();
         auto const highlighFromFn        = HighlightFn                && HighlightFn(mem_data, addr + 1);
         auto const isNotLastHighlighAddr = (addr + 1)                  < HighlightMax;
         auto const highlightFromPreview  = (addr + 1)                  < (DataPreviewAddr + preview_data_type_size);
-        auto const isNotLastInRange      = (rangeIdx < Ranges.size()) && ((addr + 1 ) < Ranges[rangeIdx].RangeEndAddress);
+        auto const isNotLastInRange = (vertexPropertyIdx < VertexProperties.size()) && (rangeIdx < VertexProperties[vertexPropertyIdx].Ranges.size()) && ((addr + 1) < VertexProperties[vertexPropertyIdx].Ranges[rangeIdx].EndAddress);
         return isNotLastAddr && ((highlighMaxWasSet && isNotLastHighlighAddr) || highlighFromFn || highlightFromPreview || isNotLastInRange);
     }
 
@@ -632,25 +653,25 @@ struct MemoryEditor
         size_t const nextLineFirstAddr = lastLineAddr + 1;
         size_t const cellAddrBellow = nextLineFirstAddr + colIdx;
 
-        NoteRange rangesInNextLine = {};
+        Note rangesInNextLine = {};
         bool noteDoesntEndInSameLine = false;
         bool cellBelowInSameNote = false;
         if (note_idx < this->Notes.size()){
             auto const &note = this->Notes[note_idx];
 
-            noteDoesntEndInSameLine = nextLineFirstAddr < note.RangeEndAddress;
-            cellBelowInSameNote     = cellAddrBellow    < note.RangeEndAddress;
+            noteDoesntEndInSameLine = nextLineFirstAddr < note.NoteRange.EndAddress;
+            cellBelowInSameNote     = cellAddrBellow    < note.NoteRange.EndAddress;
 
             size_t const noteStartIdx = note_idx + 1;
             for (size_t noteIdx = noteStartIdx; noteIdx < Notes.size(); noteIdx += 1) {
                 auto const &note = Notes[noteIdx];
-                if (nextLineFirstAddr >= note.RangeStartAddress) {
-                    if (cellAddrBellow < note.RangeEndAddress) {
+                if (nextLineFirstAddr >= note.NoteRange.StartAddress) {
+                    if (cellAddrBellow < note.NoteRange.EndAddress) {
                         if (noteIdx == noteStartIdx) {
-                            rangesInNextLine.RangeStartAddress = note.RangeStartAddress;
+                            rangesInNextLine.NoteRange.StartAddress = note.NoteRange.StartAddress;
                         }
-                        rangesInNextLine.RangeEndAddress = note.RangeEndAddress;
-                        rangesInNextLine.isActive = note.isActive;
+                        rangesInNextLine.NoteRange.EndAddress = note.NoteRange.EndAddress;
+                        rangesInNextLine.IsActive = note.IsActive;
                     } else {
                         break;
                     }
@@ -658,8 +679,8 @@ struct MemoryEditor
             }
         }
 
-        bool const cellAddrBellowBellongToRangesInNextLine = cellAddrBellow < rangesInNextLine.RangeEndAddress;
-        bool const cellAddrBellowRangeIsActive = rangesInNextLine.isActive;
+        bool const cellAddrBellowBellongToRangesInNextLine = cellAddrBellow < rangesInNextLine.NoteRange.EndAddress;
+        bool const cellAddrBellowRangeIsActive = rangesInNextLine.IsActive;
         bool const hasAnotherNoteBelow = cellAddrBellowBellongToRangesInNextLine && cellAddrBellowRangeIsActive;
         bool const hasSameNoteBelow = noteDoesntEndInSameLine && cellBelowInSameNote;
         bool const hasNoteBelow = hasSameNoteBelow || hasAnotherNoteBelow;
@@ -910,22 +931,22 @@ struct MemoryEditor
                     int column = 0;
                     ImGui::TableSetColumnIndex(column);
                     ImGui::PushID(row * note_fields_count + column);
-                    if (ImGui::Checkbox("##isActive", &note.isActive)) {
+                    if (ImGui::Checkbox("##vertexPropertyIsActive", &note.IsActive)) {
                     };
                     ImGui::PopID();
 
                     ++column;
                     ImGui::TableSetColumnIndex(column);
                     ImGui::PushID(row * note_fields_count + column);
-                    float color[3] = {note.RangeColor.r/255.0f, note.RangeColor.g/255.0f, note.RangeColor.b/255.0f};
+                    float color[3] = {note.NoteColor.r/255.0f, note.NoteColor.g/255.0f, note.NoteColor.b/255.0f};
                     auto const color_edit_flags = ImGuiColorEditFlags_NoInputs
                                                 | ImGuiColorEditFlags_NoLabel
                                                 | ImGuiColorEditFlags_NoAlpha
                                                 | ImGuiColorEditFlags_NoOptions;
-                    if (ImGui::ColorEdit4("##color", (float *)color, color_edit_flags)) {
-                        note.RangeColor.r = color[0] * 255;
-                        note.RangeColor.g = color[1] * 255;
-                        note.RangeColor.b = color[2] * 255;
+                    if (ImGui::ColorEdit4("##vertexPropertyColor", (float *)color, color_edit_flags)) {
+                        note.NoteColor.r = color[0] * 255;
+                        note.NoteColor.g = color[1] * 255;
+                        note.NoteColor.b = color[2] * 255;
                     };
                     ImGui::PopID();
 
@@ -967,12 +988,14 @@ struct MemoryEditor
                     ImGui::PushID(column);
                     if (column == 0) {
                         if (ImGui::Button("+##add", ImVec2(TEXT_BASE_WIDTH * 4.0f, 0.0f))) {
-                            Notes.push_back(NoteRange{
-                                .RangeStartAddress = 0,
-                                .RangeEndAddress = 1,
-                                .RangeColor = DEFAULT_NOTE_COLOR,
+                            Notes.push_back(Note{
+                                .NoteRange = Range{
+                                    .StartAddress = 0,
+                                    .EndAddress = 1,
+                                },
+                                .NoteColor = DEFAULT_NOTE_COLOR,
                                 .Description = "Some description",
-                                .isActive = true
+                                .IsActive = true
                             });
                         }
                     } else {
@@ -998,22 +1021,22 @@ struct MemoryEditor
                     ++column;
                     ImGui::TableSetColumnIndex(column);
                     ImGui::PushID(row * note_fields_count + column);
-                    if (ImGui::Checkbox("##isActive", &note.isActive)) {
+                    if (ImGui::Checkbox("##IsActive", &note.IsActive)) {
                     };
                     ImGui::PopID();
 
                     ++column;
                     ImGui::TableSetColumnIndex(column);
                     ImGui::PushID(row * note_fields_count + column);
-                    float color[3] = {note.RangeColor.r/255.0f, note.RangeColor.g/255.0f, note.RangeColor.b/255.0f};
+                    float color[3] = {note.NoteColor.r/255.0f, note.NoteColor.g/255.0f, note.NoteColor.b/255.0f};
                     auto const color_edit_flags = ImGuiColorEditFlags_NoInputs
                                                 | ImGuiColorEditFlags_NoLabel
                                                 | ImGuiColorEditFlags_NoAlpha
                                                 | ImGuiColorEditFlags_NoOptions;
                     if (ImGui::ColorEdit4("##color", (float *)color, color_edit_flags)) {
-                        note.RangeColor.r = color[0] * 255;
-                        note.RangeColor.g = color[1] * 255;
-                        note.RangeColor.b = color[2] * 255;
+                        note.NoteColor.r = color[0] * 255;
+                        note.NoteColor.g = color[1] * 255;
+                        note.NoteColor.b = color[2] * 255;
                     };
                     ImGui::PopID();
 
@@ -1022,9 +1045,9 @@ struct MemoryEditor
                     ImGui::PushID(row * note_fields_count + column);
                     ImGui::PushItemWidth(TEXT_BASE_WIDTH * 18.0f);
                     /* InputScalar */ {
-                        ImSnprintf(buf, IM_ARRAYSIZE(buf), "0x%lX", note.RangeStartAddress);
+                        ImSnprintf(buf, IM_ARRAYSIZE(buf), "0x%lX", note.NoteRange.StartAddress);
                         if (ImGui::InputText("##range_start", buf, IM_ARRAYSIZE(buf), ImGuiInputTextFlags_CharsHexadecimal)) {
-                            sscanf(buf, "0x%lX", &note.RangeStartAddress);
+                            sscanf(buf, "0x%lX", &note.NoteRange.StartAddress);
                         }
                     }
                     ImGui::PopItemWidth();
@@ -1035,9 +1058,9 @@ struct MemoryEditor
                     ImGui::PushID(row * note_fields_count + column);
                     ImGui::PushItemWidth(TEXT_BASE_WIDTH * 18.0f);
                     /* InputScalar */ {
-                        ImSnprintf(buf, IM_ARRAYSIZE(buf), "0x%lX", note.RangeEndAddress);
+                        ImSnprintf(buf, IM_ARRAYSIZE(buf), "0x%lX", note.NoteRange.EndAddress);
                         if (ImGui::InputText("##range_end", buf, IM_ARRAYSIZE(buf), ImGuiInputTextFlags_CharsHexadecimal)) {
-                            sscanf(buf, "0x%lX", &note.RangeEndAddress);
+                            sscanf(buf, "0x%lX", &note.NoteRange.EndAddress);
                         }
                     }
                     ImGui::PopItemWidth();
@@ -1047,7 +1070,7 @@ struct MemoryEditor
                     ImGui::TableSetColumnIndex(column);
                     ImGui::PushID(row * note_fields_count + column);
                     ImGui::PushItemWidth(ImGui::GetContentRegionAvail().x * 1.1f);
-                    ImGui::InputText("##description", note.Description.data(), note.Description.capacity());
+                    ImGui::InputText("##description", note.Description.data(), note.Description.capacity() > Note::MAX_DESCRIPTION_LEN ? Note::MAX_DESCRIPTION_LEN : note.Description.capacity());
                     ImGui::PopItemWidth();
                     ImGui::PopID();
                 }
