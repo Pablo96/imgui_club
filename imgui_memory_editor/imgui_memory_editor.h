@@ -152,7 +152,7 @@ struct MemoryEditor
             }
 
             size_t startRange = VertexProperties.front().Ranges.front().StartAddress;
-            size_t endRange = VertexProperties.back().Ranges.back().EndAddress;
+            size_t endRange = VertexProperties.front().Ranges.back().EndAddress;
 
             if (addr < startRange || addr > endRange) {
                 continue;
