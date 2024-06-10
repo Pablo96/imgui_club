@@ -151,8 +151,8 @@ struct MemoryEditor
                 continue;
             }
 
-            size_t startRange = VertexProperties.front().Ranges.front().StartAddress;
-            size_t endRange = VertexProperties.front().Ranges.back().EndAddress;
+            size_t startRange = vertexProperty.Ranges.front().StartAddress;
+            size_t endRange = vertexProperty.Ranges.back().EndAddress;
 
             if (addr < startRange || addr > endRange) {
                 continue;
@@ -924,37 +924,37 @@ struct MemoryEditor
                     ImGui::PopID();
                 }
 
-                for (size_t row = 0; row < Notes.size(); row++) {
+                for (size_t row = 0; row < VertexProperties.size(); row++) {
                     ImGui::TableNextRow();
-                    auto &note = Notes[row];
+                    auto &vertexProperty = VertexProperties[row];
 
                     int column = 0;
                     ImGui::TableSetColumnIndex(column);
                     ImGui::PushID(row * note_fields_count + column);
-                    if (ImGui::Checkbox("##vertexPropertyIsActive", &note.IsActive)) {
-                    };
+                    if (ImGui::Checkbox("##vertexPropertyIsActive", &vertexProperty.IsActive)) {
+                    }
                     ImGui::PopID();
 
                     ++column;
                     ImGui::TableSetColumnIndex(column);
                     ImGui::PushID(row * note_fields_count + column);
-                    float color[3] = {note.NoteColor.r/255.0f, note.NoteColor.g/255.0f, note.NoteColor.b/255.0f};
+                    float color[3] = {vertexProperty.VPColor.r/255.0f, vertexProperty.VPColor.g/255.0f, vertexProperty.VPColor.b/255.0f};
                     auto const color_edit_flags = ImGuiColorEditFlags_NoInputs
                                                 | ImGuiColorEditFlags_NoLabel
                                                 | ImGuiColorEditFlags_NoAlpha
                                                 | ImGuiColorEditFlags_NoOptions;
                     if (ImGui::ColorEdit4("##vertexPropertyColor", (float *)color, color_edit_flags)) {
-                        note.NoteColor.r = color[0] * 255;
-                        note.NoteColor.g = color[1] * 255;
-                        note.NoteColor.b = color[2] * 255;
-                    };
+                        vertexProperty.VPColor.r = color[0] * 255;
+                        vertexProperty.VPColor.g = color[1] * 255;
+                        vertexProperty.VPColor.b = color[2] * 255;
+                    }
                     ImGui::PopID();
 
                     ++column;
                     ImGui::TableSetColumnIndex(column);
                     ImGui::PushID(row * note_fields_count + column);
                     ImGui::PushItemWidth(ImGui::GetContentRegionAvail().x * 1.1f);
-                    ImGui::Text("%s", note.Description.data());
+                    ImGui::Text("%s", vertexProperty.Description.data());
                     ImGui::PopItemWidth();
                     ImGui::PopID();
                 }
