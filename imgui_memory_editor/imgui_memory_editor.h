@@ -147,7 +147,7 @@ struct MemoryEditor
         for (size_t vertex_property_idx = 0L; vertex_property_idx < VertexProperties.size(); vertex_property_idx++)
         {
             auto vertexProperty = VertexProperties[vertex_property_idx];
-            if (!vertexProperty.IsActive) {
+            if (!vertexProperty.IsActive || vertexProperty.Ranges.size() <= 0) {
                 continue;
             }
 
